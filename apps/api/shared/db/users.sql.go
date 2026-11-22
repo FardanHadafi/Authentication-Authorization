@@ -44,21 +44,12 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, full_name, email, password_hash, role, status FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1
+SELECT id, full_name, email, password_hash, role, status, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1
 `
 
-type GetUserByEmailRow struct {
-	ID           uuid.UUID `json:"id"`
-	FullName     string    `json:"full_name"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"password_hash"`
-	Role         string    `json:"role"`
-	Status       string    `json:"status"`
-}
-
-func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (GetUserByEmailRow, error) {
+func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error) {
 	row := q.db.QueryRow(ctx, getUserByEmail, lower)
-	var i GetUserByEmailRow
+	var i User
 	err := row.Scan(
 		&i.ID,
 		&i.FullName,
@@ -66,6 +57,8 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (GetUserByEm
 		&i.PasswordHash,
 		&i.Role,
 		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

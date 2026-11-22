@@ -2,7 +2,7 @@ import { RegisterSchema } from '#lib/schemas/auth.ts';
 import { fail, type Actions } from '@sveltejs/kit';
 import * as v from 'valibot';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+const API_URL = import.meta.env.VITE_API_URL!;
 
 export const actions: Actions = {
 	default: async ({ request, fetch }) => {

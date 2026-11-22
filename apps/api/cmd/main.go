@@ -96,10 +96,18 @@ func main() {
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
 
+	JWT_SECRET := os.Getenv("JWT_SECRET")
+	if JWT_SECRET == "" {
+		logger.Error("JWT_SECRET is not set in .env file")
+		os.Exit(1)
+	}
+
+	tokenManager := shared.NewTokenManager([]byte(JWT_SECRET), 15*time.Minute, "crackerstudio@digital")
+
 	mux := http.NewServeMux()
 
 	// Auth Service
-	authService := auth.NewAuthService(queries, asynqClient, mailer, redisClient)
+	authService := auth.NewAuthService(queries, asynqClient, mailer, redisClient, tokenManager)
 
 	// Auth Handler
 	authHandler := auth.NewAuthHandler(authService, logger, validate)
