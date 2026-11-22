@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "skills": {
+    "valibot": {
+      "source": "open-circle/agent-skills",
+      "commit": "ea150d8fc3a856801256308b3a83ed79cb3ff3a4",
+      "sourceType": "github",
+      "skillPath": "skills/valibot/SKILL.md",
+      "computedHash": "5792dc3f1fe0d09b69be700a75b3ea643ce7ed97fba659082f5da2f7f024ea12"
+    }
+  }
+}

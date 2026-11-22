@@ -1,0 +1,23 @@
+# Konfigurasi ini digunakan jika ingin menjalankan backend API di dalam container juga
+# Penggunaan: podman compose -f compose.yaml -f compose.app.yaml up -d
+services:
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: auth-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8080}:8080"
+    environment:
+      DB_URL: "postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-12345}@postgres:5432/${POSTGRES_DB:-auth_db}?sslmode=disable"
+      REDIS_URL: "redis://redis:6379"
+      REDIS_ADDR: "redis:6379"
+      SMTP_HOST: "mailpit"
+      SMTP_PORT: 1025
+      SMTP_FROM: "crackerstudio@digital"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
