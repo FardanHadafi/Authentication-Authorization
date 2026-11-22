@@ -1,1 +1,207 @@
 openapi: 3.2.0
+info:
+  title: Authentication & Authorization API
+  version: 1.0.0
+  description: |
+    Production-grade Authentication and Authorization REST API service built with:
+    - **Go 1.27** (net/http ServeMux routing, encoding/json/v2, gobreaker circuit breaker)
+    - **PostgreSQL 18** (Native UUIDv7, SQLC, pgx/v5)
+    - **Redis 8** (Verification tokens, refresh token rotation, task queue)
+    - **Asynq & Mailpit** (Asynchronous email queue & SMTP delivery)
+  contact:
+    name: API Support
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+tags:
+  - name: Authentication
+    description: User registration, email verification, and session management
+
+paths:
+  /api/auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: Register a new user account
+      description: |
+        Registers a new user with Argon2id password hashing, saves records to PostgreSQL,
+        stores a 24-hour verification token in Redis, and dispatches a verification email task via Asynq.
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Validation error or invalid request payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Key: 'CreateUserRequest.Email' Error:Field validation for 'Email' failed on the 'email' tag"
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "email already registered"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "internal server error"
+
+  /api/auth/verify:
+    get:
+      tags:
+        - Authentication
+      summary: Verify user email address
+      description: |
+        Validates the UUID verification token against Redis, updates user status in PostgreSQL
+        from `pending` to `active`, deletes the one-time token from Redis, and redirects the browser
+        to the SvelteKit frontend (`${FRONTEND_URL}/register?verified=true`).
+      operationId: verifyEmail
+      parameters:
+        - name: token
+          in: query
+          required: true
+          description: UUID verification token delivered to user's email inbox
+          schema:
+            type: string
+            format: uuid
+            example: "01935693-bb6c-7d4a-aa76-e0278ceec002"
+      responses:
+        '303':
+          description: Successful verification redirect to frontend SvelteKit page
+          headers:
+            Location:
+              description: Frontend URL with verification status query parameter
+              schema:
+                type: string
+                example: "http://localhost:5173/register?verified=true"
+        '400':
+          description: Missing token or token expired/invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingToken:
+                  summary: Missing token parameter
+                  value:
+                    error: "token is required"
+                expiredToken:
+                  summary: Expired or non-existent token
+                  value:
+                    error: "invalid or expired verification token"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "internal server error"
+
+components:
+  schemas:
+    CreateUserRequest:
+      type: object
+      required:
+        - full_name
+        - email
+        - password
+      properties:
+        full_name:
+          type: string
+          minLength: 2
+          maxLength: 255
+          description: Full name of the user
+          example: "Nilou Mirei"
+        email:
+          type: string
+          format: email
+          minLength: 1
+          maxLength: 255
+          description: Unique, valid email address
+          example: "nilou@example.com"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 255
+          description: Plain text password (hashed using Argon2id with default memory parameters)
+          example: "SecretP@ss123"
+
+    UserResponse:
+      type: object
+      required:
+        - id
+        - full_name
+        - email
+        - role
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Native UUIDv7 primary identifier
+          example: "01935693-bb6c-7d4a-aa76-e0278ceec002"
+        full_name:
+          type: string
+          description: Full name of the user
+          example: "Nilou Mirei"
+        email:
+          type: string
+          format: email
+          description: User's registered email address
+          example: "nilou@example.com"
+        role:
+          type: string
+          description: User role in the system
+          enum: [member, admin]
+          default: member
+          example: "member"
+        status:
+          type: string
+          description: Account verification status
+          enum: [pending, active, suspended]
+          default: pending
+          example: "pending"
+        created_at:
+          type: string
+          format: date-time
+          description: Account creation timestamp
+          example: "2026-11-22T04:00:55Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: Account last update timestamp
+          example: "2026-11-22T04:00:55Z"
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+          example: "invalid request body"
