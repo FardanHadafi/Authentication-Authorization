@@ -17,6 +17,9 @@ import (
 type AuthHandler interface {
 	Register(w http.ResponseWriter, r *http.Request)
 	VerifyEmail(w http.ResponseWriter, r *http.Request)
+	Login(w http.ResponseWriter, r *http.Request)
+	RefreshToken(w http.ResponseWriter, r *http.Request)
+	Logout(w http.ResponseWriter, r *http.Request)
 }
 
 type authHandler struct {
@@ -89,4 +92,122 @@ func (h *authHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 		frontendURL = "http://localhost:5173"
 	}
 	http.Redirect(w, r, fmt.Sprintf("%s/register?verified=true", frontendURL), http.StatusSeeOther)
+}
+
+func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
+	var request LoginUserRequest
+
+	// Decode user request
+	if err := json.UnmarshalRead(r.Body, &request); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validasi user request struct
+	if err := h.validator.StructCtx(r.Context(), request); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Panggil service
+	authResponse, err := h.authService.Login(r.Context(), request)
+	if err != nil {
+		if errors.Is(err, ErrInvalidCredentials) {
+			shared.WriteError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+
+		if errors.Is(err, ErrAccountNotVerified) {
+			shared.WriteError(w, http.StatusForbidden, err.Error())
+			return
+		}
+
+		h.logger.Error("failed to login", "error", err)
+		shared.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	// Pasang access dan refresh token ke dalam httpOnly cookie
+	isProd := os.Getenv("APP_ENV") == "production"
+	shared.SetAuthCookie(w, authResponse.AccessToken, authResponse.RefreshToken, isProd)
+
+	// Kirim response 200 Ok dengan payload AuthResponse
+	_ = shared.WriteJSON(w, http.StatusOK, authResponse)
+}
+
+func (h *authHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
+	var token string
+
+	// 1. Coba baca dari request body jika ada
+	if r.Body != nil && r.ContentLength > 0 {
+		var request RefreshTokenRequest
+		if err := json.UnmarshalRead(r.Body, &request); err == nil {
+			token = request.RefreshToken
+		}
+	}
+
+	// 2. Fallback baca dari httpOnly cookie jika tidak disertakan di body
+	if strings.TrimSpace(token) == "" {
+		if cookie, err := r.Cookie("refresh_token"); err == nil {
+			token = cookie.Value
+		}
+	}
+
+	token = strings.TrimSpace(token)
+	if token == "" {
+		shared.WriteError(w, http.StatusBadRequest, "refresh token is required")
+		return
+	}
+
+	authResponse, err := h.authService.RefreshToken(r.Context(), token)
+	if err != nil {
+		if errors.Is(err, ErrInvalidOrExpiredToken) {
+			shared.WriteError(w, http.StatusUnauthorized, "invalid or expired refresh token")
+			return
+		}
+
+		h.logger.Error("failed to refresh token", "error", err)
+		shared.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	// Pasang access dan refresh token baru ke httpOnly cookie (RTR)
+	isProd := os.Getenv("APP_ENV") == "production"
+	shared.SetAuthCookie(w, authResponse.AccessToken, authResponse.RefreshToken, isProd)
+
+	_ = shared.WriteJSON(w, http.StatusOK, authResponse)
+}
+
+func (h *authHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	var token string
+
+	// 1. Coba baca dari request body jika ada
+	if r.Body != nil && r.ContentLength > 0 {
+		var request LogoutRequest
+		if err := json.UnmarshalRead(r.Body, &request); err == nil {
+			token = request.RefreshToken
+		}
+	}
+
+	// 2. Fallback baca dari httpOnly cookie jika tidak disertakan di body
+	if strings.TrimSpace(token) == "" {
+		if cookie, err := r.Cookie("refresh_token"); err == nil {
+			token = cookie.Value
+		}
+	}
+
+	// 3. Invalidate refresh token di Redis
+	if strings.TrimSpace(token) != "" {
+		if err := h.authService.Logout(r.Context(), token); err != nil {
+			h.logger.Error("failed to revoke refresh token during logout", "error", err)
+		}
+	}
+
+	// 4. Hapus cookie dari browser client
+	isProd := os.Getenv("APP_ENV") == "production"
+	shared.ClearAuthCookie(w, isProd)
+
+	_ = shared.WriteJSON(w, http.StatusOK, map[string]string{
+		"message": "logged out successfully",
+	})
 }

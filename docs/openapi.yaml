@@ -118,6 +118,160 @@ paths:
               example:
                 error: "internal server error"
 
+  /api/auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Authenticate user & issue tokens
+      description: |
+        Authenticates user with email and password (Argon2id), verifies account status (`active`),
+        issues a short-lived JWT Access Token (15m) and an Opaque Refresh Token (7d in Redis),
+        and attaches them as secure `httpOnly` cookies.
+      operationId: loginUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginUserRequest'
+      responses:
+        '200':
+          description: Successfully authenticated
+          headers:
+            Set-Cookie:
+              description: Sets `access_token` and `refresh_token` as httpOnly cookies
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Validation error or invalid request payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "invalid request body"
+        '401':
+          description: Invalid email or password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "invalid credentials"
+        '403':
+          description: Account email not verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "email not verified, please check your email inbox"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "internal server error"
+
+  /api/auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access and refresh tokens (RTR)
+      description: |
+        Rotates the refresh token (Refresh Token Rotation - RTR) and issues a new access token.
+        Accepts the refresh token via JSON body (`refresh_token`) or via httpOnly cookie.
+        The old refresh token is invalidated immediately in Redis.
+      operationId: refreshToken
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Tokens refreshed successfully
+          headers:
+            Set-Cookie:
+              description: Sets rotated `access_token` and `refresh_token` as httpOnly cookies
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Missing refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "refresh token is required"
+        '401':
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "invalid or expired refresh token"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "internal server error"
+
+  /api/auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: Logout user session
+      description: |
+        Revokes the refresh token from Redis and clears authentication cookies (`access_token` and `refresh_token`)
+        from the browser.
+      operationId: logoutUser
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+      responses:
+        '200':
+          description: Logged out successfully
+          headers:
+            Set-Cookie:
+              description: Clears `access_token` and `refresh_token` cookies (Max-Age=0)
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "logged out successfully"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "internal server error"
+
 components:
   schemas:
     CreateUserRequest:
@@ -147,6 +301,45 @@ components:
           maxLength: 255
           description: Plain text password (hashed using Argon2id with default memory parameters)
           example: "SecretP@ss123"
+
+    LoginUserRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+          maxLength: 255
+          description: User's registered email address
+          example: "nilou@example.com"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 255
+          description: User's account password
+          example: "SecretP@ss123"
+
+    RefreshTokenRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          description: Opaque refresh token received from login or previous refresh
+          example: "a8f5b2c910e34d7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a"
+
+    LogoutRequest:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+          description: Optional refresh token to invalidate if not supplied via cookie
+          example: "a8f5b2c910e34d7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a"
 
     UserResponse:
       type: object
@@ -195,6 +388,29 @@ components:
           format: date-time
           description: Account last update timestamp
           example: "2026-11-22T04:00:55Z"
+
+    AuthResponse:
+      type: object
+      required:
+        - user
+        - expires_at
+      properties:
+        token_type:
+          type: string
+          example: "Bearer"
+        access_token:
+          type: string
+          description: Signed JWT Access Token (15 minutes lifespan)
+        refresh_token:
+          type: string
+          description: Opaque Refresh Token stored in Redis (7 days lifespan)
+        expires_at:
+          type: string
+          format: date-time
+          description: Absolute expiration time of the access token
+          example: "2026-11-22T04:15:55Z"
+        user:
+          $ref: '#/components/schemas/UserResponse'
 
     ErrorResponse:
       type: object

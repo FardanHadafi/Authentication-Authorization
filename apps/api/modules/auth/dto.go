@@ -8,6 +8,19 @@ type CreateUserRequest struct {
 	PasswordHash string `json:"password" validate:"required,min=8,max=255"`
 }
 
+type LoginUserRequest struct {
+	Email    string `json:"email" validate:"required,email,min=1,max=255"`
+	Password string `json:"password" validate:"required,min=8,max=255"`
+}
+
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
+}
+
+type LogoutRequest struct {
+	RefreshToken string `json:"refresh_token,omitempty"`
+}
+
 type UserResponse struct {
 	ID        string    `json:"id"`
 	FullName  string    `json:"full_name"`
@@ -19,4 +32,9 @@ type UserResponse struct {
 }
 
 type AuthResponse struct {
+	TokenType    string       `json:"token_type,omitempty"` // "Bearer"
+	AccessToken  string       `json:"access_token,omitempty"`
+	RefreshToken string       `json:"refresh_token,omitempty"`
+	ExpiresAt    time.Time    `json:"expires_at"`
+	User         UserResponse `json:"user"`
 }
