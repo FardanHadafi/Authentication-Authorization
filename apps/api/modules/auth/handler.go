@@ -20,6 +20,9 @@ type AuthHandler interface {
 	Login(w http.ResponseWriter, r *http.Request)
 	RefreshToken(w http.ResponseWriter, r *http.Request)
 	Logout(w http.ResponseWriter, r *http.Request)
+	ForgotPassword(w http.ResponseWriter, r *http.Request)
+	ResetPassword(w http.ResponseWriter, r *http.Request)
+	ResendVerificationEmail(w http.ResponseWriter, r *http.Request)
 }
 
 type authHandler struct {
@@ -209,5 +212,90 @@ func (h *authHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	_ = shared.WriteJSON(w, http.StatusOK, map[string]string{
 		"message": "logged out successfully",
+	})
+}
+
+func (h *authHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	var request ForgotPasswordRequest
+
+	if err := json.UnmarshalRead(r.Body, &request); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.validator.StructCtx(r.Context(), request); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.authService.ForgotPassword(r.Context(), request); err != nil {
+		h.logger.Error("failed to process forgot password", "error", err)
+		shared.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	_ = shared.WriteJSON(w, http.StatusOK, map[string]string{
+		"message": "Jika email terdaftar di sistem kami, instruksi reset kata sandi telah dikirimkan ke kotak masuk Anda.",
+	})
+}
+
+func (h *authHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	var request ResetPasswordRequest
+
+	// 1. Decode request body
+	if err := json.UnmarshalRead(r.Body, &request); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// 2. Validasi input struct (token, new_password, confirm_new_password)
+	if err := h.validator.StructCtx(r.Context(), request); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// 3. Panggil service ResetPassword
+	if err := h.authService.ResetPassword(r.Context(), request); err != nil {
+		if errors.Is(err, ErrInvalidOrExpiredToken) {
+			shared.WriteError(w, http.StatusBadRequest, "invalid or expired reset token")
+			return
+		}
+
+		h.logger.Error("failed to reset password", "error", err)
+		shared.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	// 4. Bersihkan cookie auth yang mungkin ada di peramban
+	isProd := os.Getenv("APP_ENV") == "production"
+	shared.ClearAuthCookie(w, isProd)
+
+	// 5. Kembalikan response 200 OK
+	_ = shared.WriteJSON(w, http.StatusOK, ResetPasswordResponse{
+		Message: "password has been reset successfully, please login with your new password",
+	})
+}
+
+func (h *authHandler) ResendVerificationEmail(w http.ResponseWriter, r *http.Request) {
+	var request ResendVerificationEmailRequest
+
+	if err := json.UnmarshalRead(r.Body, &request); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.validator.StructCtx(r.Context(), request); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.authService.ResendVerificationEmail(r.Context(), request); err != nil {
+		h.logger.Error("failed to resend verification email", "error", err)
+		shared.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	_ = shared.WriteJSON(w, http.StatusOK, ResendVerificationEmailResponse{
+		Message: "Jika email terdaftar dan belum diverifikasi, tautan verifikasi baru telah dikirimkan ke kotak masuk Anda.",
 	})
 }

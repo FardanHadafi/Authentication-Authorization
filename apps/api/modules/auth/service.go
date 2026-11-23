@@ -32,6 +32,9 @@ type AuthService interface {
 	Login(ctx context.Context, request LoginUserRequest) (AuthResponse, error)
 	RefreshToken(ctx context.Context, refreshToken string) (AuthResponse, error)
 	Logout(ctx context.Context, refreshToken string) error
+	ForgotPassword(ctx context.Context, request ForgotPasswordRequest) error
+	ResetPassword(ctx context.Context, request ResetPasswordRequest) error
+	ResendVerificationEmail(ctx context.Context, request ResendVerificationEmailRequest) error
 }
 
 type authService struct {
@@ -93,8 +96,13 @@ func (a *authService) Register(ctx context.Context, request CreateUserRequest) (
 	verificationLink := fmt.Sprintf("%s/api/auth/verify?token=%s", appURL, verificationToken)
 
 	task, taskErr := shared.NewVerificationEmailTask(newUser.Email, newUser.FullName, verificationLink)
-	if taskErr == nil && a.asynqClient != nil {
-		_, _ = a.asynqClient.EnqueueContext(ctx, task)
+	if taskErr != nil {
+		return UserResponse{}, fmt.Errorf("failed to create verification email task: %w", taskErr)
+	}
+	if a.asynqClient != nil {
+		if _, err := a.asynqClient.EnqueueContext(ctx, task); err != nil {
+			return UserResponse{}, fmt.Errorf("failed to enqueue verification email task: %w", err)
+		}
 	}
 
 	// 6. Return response yang sudah dipetakan dengan DTO
@@ -299,6 +307,176 @@ func (a *authService) Logout(ctx context.Context, refreshToken string) error {
 	if refreshToken != "" {
 		key := fmt.Sprintf("refresh:%s", refreshToken)
 		_ = a.redis.Del(ctx, key).Err()
+	}
+
+	return nil
+}
+
+func (a *authService) ForgotPassword(ctx context.Context, request ForgotPasswordRequest) error {
+	if a.redis == nil {
+		return ErrRedisClientNotInitialized
+	}
+
+	request.Email = strings.TrimSpace(strings.ToLower(request.Email))
+
+	user, err := a.querier.GetUserByEmail(ctx, request.Email)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Anti-user enumeration: jangan bocorkan bahwa email tidak terdaftar
+			return nil
+		}
+		return fmt.Errorf("failed to get user from database: %w", err)
+	}
+
+	// Jangan kirim reset password jika akun belum aktif
+	if user.Status != "active" {
+		return nil
+	}
+
+	// Generate reset token (UUID) dan simpan ke Redis dengan TTL 15 menit
+	resetToken := uuid.New().String()
+	resetKey := fmt.Sprintf("reset:%s", resetToken)
+	if err := a.redis.Set(ctx, resetKey, user.ID.String(), 15*time.Minute).Err(); err != nil {
+		return fmt.Errorf("failed to save reset token to redis: %w", err)
+	}
+
+	// Susun URL reset password menuju frontend SvelteKit
+	frontendURL := strings.TrimRight(os.Getenv("FRONTEND_URL"), "/")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:5173"
+	}
+	resetLink := fmt.Sprintf("%s/reset-password?token=%s", frontendURL, resetToken)
+
+	// Buat task asynq dan masukkan ke antrean
+	task, taskErr := shared.NewResetPasswordEmailTask(user.Email, user.FullName, resetLink)
+	if taskErr != nil {
+		return fmt.Errorf("failed to create reset email task: %w", taskErr)
+	}
+	if a.asynqClient != nil {
+		if _, err := a.asynqClient.EnqueueContext(ctx, task); err != nil {
+			return fmt.Errorf("failed to enqueue reset email task: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (a *authService) ResetPassword(ctx context.Context, request ResetPasswordRequest) error {
+	if a.redis == nil {
+		return ErrRedisClientNotInitialized
+	}
+
+	token := strings.TrimSpace(request.Token)
+	if token == "" {
+		return ErrInvalidOrExpiredToken
+	}
+
+	// 1. Ambil user ID dari Redis berdasarkan token reset
+	resetKey := fmt.Sprintf("reset:%s", token)
+	userIDStr, err := a.redis.Get(ctx, resetKey).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return ErrInvalidOrExpiredToken
+		}
+		return fmt.Errorf("failed to get reset token from redis: %w", err)
+	}
+
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return fmt.Errorf("invalid user id in reset token: %w", err)
+	}
+
+	// 2. Segera hapus token dari Redis (One-Time Token Enforcement)
+	_ = a.redis.Del(ctx, resetKey).Err()
+
+	// 3. Pastikan user ada di database dan statusnya masih aktif
+	user, err := a.querier.GetUserByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidOrExpiredToken
+		}
+		return fmt.Errorf("failed to get user: %w", err)
+	}
+
+	if user.Status != "active" {
+		return errors.New("account is not active")
+	}
+
+	// 4. Hash password baru menggunakan Argon2id
+	hashedPassword, err := argon2id.CreateHash(request.NewPassword, argon2id.DefaultParams)
+	if err != nil {
+		return fmt.Errorf("failed to hash new password: %w", err)
+	}
+
+	// 5. Update password di database PostgreSQL
+	err = a.querier.UpdateUserPassword(ctx, db.UpdateUserPasswordParams{
+		ID:           user.ID,
+		PasswordHash: hashedPassword,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update user password: %w", err)
+	}
+
+	// 6. Cabut seluruh sesi aktif lama (revoke refresh tokens) di Redis
+	iter := a.redis.Scan(ctx, 0, "refresh:*", 0).Iterator()
+	for iter.Next(ctx) {
+		k := iter.Val()
+		val, err := a.redis.Get(ctx, k).Result()
+		if err == nil && val == user.ID.String() {
+			_ = a.redis.Del(ctx, k).Err()
+		}
+	}
+
+	return nil
+}
+
+func (a *authService) ResendVerificationEmail(ctx context.Context, request ResendVerificationEmailRequest) error {
+	if a.redis == nil {
+		return ErrRedisClientNotInitialized
+	}
+
+	request.Email = strings.TrimSpace(strings.ToLower(request.Email))
+
+	user, err := a.querier.GetUserByEmail(ctx, request.Email)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Anti-user enumeration: jangan bocorkan bahwa email tidak terdaftar
+			return nil
+		}
+
+		return fmt.Errorf("failed to get user from database: %w", err)
+	}
+
+	// Hanya kirim verifikasi ulang jika status akun memang masih pending
+	if user.Status != "pending" {
+		return nil
+	}
+
+	// 1. Generate token verifikasi baru (UUID)
+	verificationToken := uuid.New().String()
+
+	// 2. Simpan token verifikasi ke Redis dengan TTL 24 jam
+	verifyKey := fmt.Sprintf("verify:%s", verificationToken)
+	if err := a.redis.Set(ctx, verifyKey, user.ID.String(), 24*time.Hour).Err(); err != nil {
+		return fmt.Errorf("failed to save verification token to redis: %w", err)
+	}
+
+	// 3. Susun verification link mengarah ke endpoint backend verify
+	appURL := strings.TrimRight(os.Getenv("APP_URL"), "/")
+	if appURL == "" {
+		appURL = "http://localhost:8080"
+	}
+	verificationLink := fmt.Sprintf("%s/api/auth/verify?token=%s", appURL, verificationToken)
+
+	// 4. Buat task Asynq dan masukkan ke antrean pengiriman email
+	task, taskErr := shared.NewResendVerificationEmailTask(user.Email, user.FullName, verificationLink)
+	if taskErr != nil {
+		return fmt.Errorf("failed to create resend verification email task: %w", taskErr)
+	}
+	if a.asynqClient != nil {
+		if _, err := a.asynqClient.EnqueueContext(ctx, task); err != nil {
+			return fmt.Errorf("failed to enqueue resend verification email task: %w", err)
+		}
 	}
 
 	return nil

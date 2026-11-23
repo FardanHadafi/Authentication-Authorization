@@ -272,6 +272,132 @@ paths:
               example:
                 error: "internal server error"
 
+  /api/auth/forgot-password:
+    post:
+      tags:
+        - Authentication
+      summary: Request password reset link
+      description: |
+        Generates a 15-minute reset token in Redis and dispatches an email with reset instructions via Asynq.
+        Implements anti-user enumeration: returns 200 OK regardless of whether email is registered.
+      operationId: forgotPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        '200':
+          description: Request accepted (anti-enumeration message)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Jika email terdaftar di sistem kami, instruksi reset kata sandi telah dikirimkan ke kotak masuk Anda."
+        '400':
+          description: Invalid request body or validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Key: 'ForgotPasswordRequest.Email' Error:Field validation for 'Email' failed on the 'email' tag"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "internal server error"
+
+  /api/auth/reset-password:
+    post:
+      tags:
+        - Authentication
+      summary: Reset user password with token
+      description: |
+        Validates the one-time reset token from Redis, updates the user's password hash using Argon2id in PostgreSQL,
+        deletes the token from Redis, and revokes all existing refresh tokens (sessions) for this user.
+      operationId: resetPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '200':
+          description: Password reset successfully
+          headers:
+            Set-Cookie:
+              description: Clears existing authentication cookies (Max-Age=0)
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResetPasswordResponse'
+        '400':
+          description: Invalid/expired token or password validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "invalid or expired reset token"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "internal server error"
+
+  /api/auth/resend-verification:
+    post:
+      tags:
+        - Authentication
+      summary: Resend account verification email
+      description: |
+        Generates a new 24-hour verification token in Redis and dispatches an email via Asynq.
+        Implements anti-user enumeration: returns 200 OK regardless of whether email is registered or already verified.
+      operationId: resendVerificationEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResendVerificationEmailRequest'
+      responses:
+        '200':
+          description: Request accepted (anti-enumeration message)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResendVerificationEmailResponse'
+        '400':
+          description: Invalid request body or validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Key: 'ResendVerificationEmailRequest.Email' Error:Field validation for 'Email' failed on the 'email' tag"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "internal server error"
+
 components:
   schemas:
     CreateUserRequest:
@@ -340,6 +466,72 @@ components:
           type: string
           description: Optional refresh token to invalidate if not supplied via cookie
           example: "a8f5b2c910e34d7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a"
+
+    ForgotPasswordRequest:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+          description: Registered account email address
+          example: "nilou@example.com"
+
+    ResetPasswordRequest:
+      type: object
+      required:
+        - token
+        - new_password
+        - confirm_new_password
+      properties:
+        token:
+          type: string
+          description: One-time reset token received from email
+          example: "01935693-bb6c-7d4a-aa76-e0278ceec002"
+        new_password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 255
+          description: New password to set
+          example: "NewP@ssw0rd123"
+        confirm_new_password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 255
+          description: Confirmation matching new_password
+          example: "NewP@ssw0rd123"
+
+    ResetPasswordResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          example: "password has been reset successfully, please login with your new password"
+
+    ResendVerificationEmailRequest:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+          description: Registered account email address requiring verification
+          example: "nilou@example.com"
+
+    ResendVerificationEmailResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          example: "Jika email terdaftar dan belum diverifikasi, tautan verifikasi baru telah dikirimkan ke kotak masuk Anda."
 
     UserResponse:
       type: object

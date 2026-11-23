@@ -5,10 +5,14 @@ import * as v from "valibot";
 
 const API_URL = import.meta.env.VITE_API_URL!;
 
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
   if (locals.user) {
     redirect(303, "/dashboard");
   }
+
+  return {
+    resetSuccess: url.searchParams.get("reset") === "true"
+  };
 };
 
 export const actions: Actions = {

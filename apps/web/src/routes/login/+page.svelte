@@ -7,8 +7,9 @@
 	import Label from '#lib/components/ui/label/label.svelte';
 	import Button from '#lib/components/ui/button/button.svelte';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
+	import CircleCheck from '@lucide/svelte/icons/circle-check';
 
-	let { form }: PageProps = $props();
+	let { data, form }: PageProps = $props();
 	let isSubmitting = $state(false);
 </script>
 
@@ -27,12 +28,35 @@
 		</Card.Header>
 
 		<Card.Content>
+			<!-- Alert Sukses Reset Password -->
+			{#if data?.resetSuccess}
+				<Alert.Root class="mb-4 border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
+					<CircleCheck class="size-4 text-emerald-600 dark:text-emerald-400" />
+					<Alert.Title>Kata Sandi Diperbarui</Alert.Title>
+					<Alert.Description class="text-foreground/90">
+						Kata sandi Anda telah berhasil diubah. Silakan masuk menggunakan kata sandi baru Anda.
+					</Alert.Description>
+				</Alert.Root>
+			{/if}
+
 			<!-- Alert Error Global dari Server (401 / 403 / 500) -->
 			{#if form?.message}
 				<Alert.Root variant="destructive" class="mb-4">
 					<CircleAlert class="size-4" />
 					<Alert.Title>Gagal Masuk</Alert.Title>
-					<Alert.Description>{form.message}</Alert.Description>
+					<Alert.Description class="space-y-2">
+						<p>{form.message}</p>
+						{#if form.message.toLowerCase().includes('not verified') || form.message.toLowerCase().includes('verifikasi')}
+							<p class="pt-1">
+								<a
+									href="/resend-verification"
+									class="text-xs font-semibold underline underline-offset-4 hover:opacity-80"
+								>
+									Kirim ulang email verifikasi &rarr;
+								</a>
+							</p>
+						{/if}
+					</Alert.Description>
 				</Alert.Root>
 			{/if}
 
