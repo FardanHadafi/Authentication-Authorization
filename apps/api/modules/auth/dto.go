@@ -21,6 +21,28 @@ type LogoutRequest struct {
 	RefreshToken string `json:"refresh_token,omitempty"`
 }
 
+type ForgotPasswordRequest struct {
+	Email string `json:"email" validate:"required,email,min=1,max=255"`
+}
+
+type ResetPasswordRequest struct {
+	Token              string `json:"token" validate:"required"`
+	NewPassword        string `json:"new_password" validate:"required,min=8,max=255"`
+	ConfirmNewPassword string `json:"confirm_new_password" validate:"required,eqfield=NewPassword,min=8,max=255"`
+}
+
+type ResendVerificationEmailRequest struct {
+	Email string `json:"email" validate:"required,email,min=1,max=255"`
+}
+
+type ResetPasswordResponse struct {
+	Message string `json:"message"`
+}
+
+type ResendVerificationEmailResponse struct {
+	Message string `json:"message"`
+}
+
 type UserResponse struct {
 	ID        string    `json:"id"`
 	FullName  string    `json:"full_name"`

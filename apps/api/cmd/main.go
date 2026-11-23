@@ -5,7 +5,6 @@ import (
 	"authentication-authorization/shared"
 	"authentication-authorization/shared/db"
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"os"
@@ -75,16 +74,8 @@ func main() {
 	)
 
 	asynqMux := asynq.NewServeMux()
-	asynqMux.HandleFunc(shared.TypeSendVerificationEmail, func(ctx context.Context, t *asynq.Task) error {
-		var payload shared.VerificationEmailPayload
-		if err := json.Unmarshal(t.Payload(), &payload); err != nil {
-			return err
-		}
-
-		logger.Info("Processing verification email task", "to", payload.ToEmail)
-
-		return mailer.SendVerificationEmail(payload.ToEmail, payload.FullName, payload.VerificationLink)
-	})
+	taskHandler := shared.NewTaskHandler(mailer, logger)
+	taskHandler.Register(asynqMux)
 
 	// Asynq Worker Goroutine
 	go func() {
