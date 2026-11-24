@@ -61,3 +61,25 @@ type AuthResponse struct {
 	ExpiresAt    time.Time    `json:"expires_at"`
 	User         UserResponse `json:"user"`
 }
+
+type AuditLogResponse struct {
+	ID           string         `json:"id"`
+	ActorID      *string        `json:"actor_id,omitempty"`
+	ActorEmail   *string        `json:"actor_email,omitempty"`
+	ActorRole    *string        `json:"actor_role,omitempty"`
+	Action       string         `json:"action"`
+	ResourceType string         `json:"resource_type"`
+	ResourceID   *string        `json:"resource_id,omitempty"`
+	Status       string         `json:"status"`
+	IPAddress    string         `json:"ip_address"`
+	UserAgent    string         `json:"user_agent"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
+}
+
+type PaginatedAuditLogsResponse struct {
+	Data       []AuditLogResponse `json:"data"`
+	TotalCount int64              `json:"total_count"`
+	Page       int32              `json:"page"`
+	Limit      int32              `json:"limit"`
+}

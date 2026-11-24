@@ -15,6 +15,19 @@ type contextKey string
 
 const RequestIDKey contextKey = "request_id"
 const UserClaimsKey contextKey = "user_claims"
+const ClientInfoKey contextKey = "client_info"
+
+type ClientInfo struct {
+	IP        string
+	UserAgent string
+}
+
+func GetClientInfo(ctx context.Context) ClientInfo {
+	if info, ok := ctx.Value(ClientInfoKey).(ClientInfo); ok {
+		return info
+	}
+	return ClientInfo{IP: "127.0.0.1", UserAgent: "unknown"}
+}
 
 // Helper untuk mengambil request ID dari context manapun
 func GetRequestID(ctx context.Context) string {
@@ -31,7 +44,7 @@ func GetUserClaims(ctx context.Context) *JWTClaims {
 	return nil
 }
 
-// Menginjeksi / meneruskan X-Request-ID
+// Menginjeksi / meneruskan X-Request-ID serta ClientInfo ke context
 func RequestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Ambil dari header request jika ada
@@ -45,8 +58,14 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 		// Set ke header response agar client menerima ID yang sama
 		w.Header().Set("X-Request-ID", requestID)
 
+		clientInfo := ClientInfo{
+			IP:        GetClientIP(r),
+			UserAgent: r.UserAgent(),
+		}
+
 		// Masukan ke context
 		ctx := context.WithValue(r.Context(), RequestIDKey, requestID)
+		ctx = context.WithValue(ctx, ClientInfoKey, clientInfo)
 
 		// Teruskan request dengan context baru
 		next.ServeHTTP(w, r.WithContext(ctx))

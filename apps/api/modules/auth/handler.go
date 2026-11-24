@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"authentication-authorization/shared"
@@ -25,6 +26,7 @@ type AuthHandler interface {
 	ResendVerificationEmail(w http.ResponseWriter, r *http.Request)
 	GetProfile(w http.ResponseWriter, r *http.Request)
 	ListUsers(w http.ResponseWriter, r *http.Request)
+	ListAuditLogs(w http.ResponseWriter, r *http.Request)
 }
 
 type authHandler struct {
@@ -340,4 +342,29 @@ func (h *authHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = shared.WriteJSON(w, http.StatusOK, users)
+}
+
+func (h *authHandler) ListAuditLogs(w http.ResponseWriter, r *http.Request) {
+	page := int32(1)
+	limit := int32(20)
+
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = int32(p)
+		}
+	}
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+			limit = int32(l)
+		}
+	}
+
+	res, err := h.authService.ListAuditLogs(r.Context(), page, limit)
+	if err != nil {
+		h.logger.Error("failed to list audit logs", "error", err)
+		shared.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	_ = shared.WriteJSON(w, http.StatusOK, res)
 }

@@ -99,8 +99,11 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	// Audit Logger (Asynchronous non-blocking security audit logger)
+	auditLogger := shared.NewAuditLogger(queries, logger, 1000)
+
 	// Auth Service
-	authService := auth.NewAuthService(queries, asynqClient, mailer, redisClient, tokenManager)
+	authService := auth.NewAuthService(queries, asynqClient, mailer, redisClient, tokenManager, auditLogger)
 
 	// Auth Handler
 	authHandler := auth.NewAuthHandler(authService, logger, validate)
@@ -184,6 +187,13 @@ func main() {
 	// 2. Matikan Asynq Server, tunggu task email yang sedang dikirim selesai
 	asynqServer.Shutdown()
 	logger.Info("Asynq worker stopped gracefully")
+
+	// 3. Matikan Audit Logger, flush sisa antrean log audit ke PostgreSQL
+	if err := auditLogger.Shutdown(shutdownCtx); err != nil {
+		logger.Error("Audit logger forced to shutdown", "error", err)
+	} else {
+		logger.Info("Audit logger flushed and stopped gracefully")
+	}
 
 	logger.Info("Application exited cleanly")
 }

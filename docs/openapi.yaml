@@ -535,6 +535,68 @@ paths:
         '429':
           $ref: '#/components/responses/TooManyRequestsResponse'
 
+  /api/admin/audit-logs:
+    get:
+      tags:
+        - Administration
+      summary: List audit logs with pagination (Admin only)
+      description: |
+        Protected endpoint that requires both a valid JWT Bearer access token and the `admin` role.
+        Returns a paginated list of immutable security audit logs (actor, action, resource, IP, user-agent, metadata, timestamp).
+      operationId: listAuditLogs
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: Page number for pagination (starts at 1)
+          required: false
+          schema:
+            type: integer
+            default: 1
+            example: 1
+        - name: limit
+          in: query
+          description: Number of audit log entries per page (max 100)
+          required: false
+          schema:
+            type: integer
+            default: 20
+            example: 20
+      responses:
+        '200':
+          description: Paginated audit logs retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAuditLogsResponse'
+        '401':
+          description: Unauthorized - missing or invalid access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "authorization header is required"
+        '403':
+          description: Forbidden - caller does not have the admin role
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "forbidden: insufficient permissions"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "internal server error"
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -789,3 +851,97 @@ components:
           type: string
           description: Human-readable error message
           example: "invalid request body"
+
+    AuditLogResponse:
+      type: object
+      required:
+        - id
+        - action
+        - resource_type
+        - status
+        - ip_address
+        - user_agent
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: UUID of the audit log record
+          example: "01935693-bb6c-7d4a-aa76-e0278ceec002"
+        actor_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: UUID of the actor who performed the action
+          example: "01935693-bb6c-7d4a-aa76-e0278ceec002"
+        actor_email:
+          type: string
+          format: email
+          nullable: true
+          description: Email of the actor
+          example: "admin@example.com"
+        actor_role:
+          type: string
+          nullable: true
+          description: Role of the actor
+          example: "admin"
+        action:
+          type: string
+          description: System security event action identifier
+          example: "auth.login"
+        resource_type:
+          type: string
+          description: Type of resource affected
+          example: "session"
+        resource_id:
+          type: string
+          nullable: true
+          description: Identifier of the resource
+          example: "01935693-bb6c-7d4a-aa76-e0278ceec002"
+        status:
+          type: string
+          description: Outcome status of the action (success or failure)
+          example: "success"
+        ip_address:
+          type: string
+          description: Client IP address
+          example: "127.0.0.1"
+        user_agent:
+          type: string
+          description: Client User-Agent string
+          example: "Mozilla/5.0 (X11; Linux x86_64)"
+        metadata:
+          type: object
+          description: Additional contextual JSON metadata
+          example:
+            reason: "invalid_credentials"
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: "2026-11-24T23:14:00Z"
+
+    PaginatedAuditLogsResponse:
+      type: object
+      required:
+        - data
+        - total_count
+        - page
+        - limit
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogResponse'
+        total_count:
+          type: integer
+          description: Total number of audit logs recorded in system
+          example: 42
+        page:
+          type: integer
+          description: Current page number
+          example: 1
+        limit:
+          type: integer
+          description: Max entries per page
+          example: 20

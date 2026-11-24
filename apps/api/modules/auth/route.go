@@ -56,4 +56,10 @@ func RegisterRoutes(mux *http.ServeMux, handler AuthHandler, tokenManager shared
 		shared.RequireRole("admin"),
 		shared.RateLimitMiddleware(limiter, shared.UserKey("admin-users"), 30, time.Minute),
 	))
+	mux.Handle("GET /api/admin/audit-logs", shared.Chain(
+		http.HandlerFunc(handler.ListAuditLogs),
+		shared.RequireAuth(tokenManager, revocationChecker),
+		shared.RequireRole("admin"),
+		shared.RateLimitMiddleware(limiter, shared.UserKey("admin-audit-logs"), 60, time.Minute),
+	))
 }

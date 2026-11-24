@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -40,6 +41,7 @@ type AuthService interface {
 	ResendVerificationEmail(ctx context.Context, request ResendVerificationEmailRequest) error
 	GetProfile(ctx context.Context, userID uuid.UUID) (UserResponse, error)
 	ListUsers(ctx context.Context) ([]UserResponse, error)
+	ListAuditLogs(ctx context.Context, page, limit int32) (PaginatedAuditLogsResponse, error)
 }
 
 type authService struct {
@@ -48,15 +50,17 @@ type authService struct {
 	mailer       shared.EmailSender
 	redis        *redis.Client
 	tokenManager shared.TokenManager
+	auditLogger  shared.AuditLogger
 }
 
-func NewAuthService(querier db.Querier, asynqClient *asynq.Client, mailer shared.EmailSender, redis *redis.Client, tokenManager shared.TokenManager) AuthService {
+func NewAuthService(querier db.Querier, asynqClient *asynq.Client, mailer shared.EmailSender, redis *redis.Client, tokenManager shared.TokenManager, auditLogger shared.AuditLogger) AuthService {
 	return &authService{
 		querier:      querier,
 		asynqClient:  asynqClient,
 		mailer:       mailer,
 		redis:        redis,
 		tokenManager: tokenManager,
+		auditLogger:  auditLogger,
 	}
 }
 
@@ -110,6 +114,18 @@ func (a *authService) Register(ctx context.Context, request CreateUserRequest) (
 		}
 	}
 
+	if a.auditLogger != nil {
+		a.auditLogger.Log(ctx, shared.AuditEntry{
+			ActorID:      &newUser.ID,
+			ActorEmail:   newUser.Email,
+			ActorRole:    newUser.Role,
+			Action:       "auth.register",
+			ResourceType: "user",
+			ResourceID:   newUser.ID.String(),
+			Status:       "success",
+		})
+	}
+
 	// 6. Return response yang sudah dipetakan dengan DTO
 	return UserResponse{
 		ID:           newUser.ID.String(),
@@ -153,6 +169,17 @@ func (a *authService) VerifyEmail(ctx context.Context, token string) error {
 
 	// Hapus token dari Redis agar tidak bisa digunakan ulang
 	_ = a.redis.Del(ctx, key).Err()
+
+	if a.auditLogger != nil {
+		a.auditLogger.Log(ctx, shared.AuditEntry{
+			ActorID:      &userID,
+			Action:       "auth.email_verified",
+			ResourceType: "user",
+			ResourceID:   userID.String(),
+			Status:       "success",
+		})
+	}
+
 	return nil
 }
 
@@ -168,6 +195,15 @@ func (a *authService) Login(ctx context.Context, request LoginUserRequest) (Auth
 	user, err := a.querier.GetUserByEmail(ctx, request.Email)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			if a.auditLogger != nil {
+				a.auditLogger.Log(ctx, shared.AuditEntry{
+					ActorEmail:   request.Email,
+					Action:       "auth.login",
+					ResourceType: "session",
+					Status:       "failure",
+					Metadata:     map[string]any{"reason": "user_not_found"},
+				})
+			}
 			return AuthResponse{}, ErrInvalidCredentials
 		}
 		return AuthResponse{}, fmt.Errorf("failed to get user from database: %w", err)
@@ -181,13 +217,46 @@ func (a *authService) Login(ctx context.Context, request LoginUserRequest) (Auth
 
 	// Jika format valid tapi hash tidak cocok
 	if !match {
+		if a.auditLogger != nil {
+			a.auditLogger.Log(ctx, shared.AuditEntry{
+				ActorID:      &user.ID,
+				ActorEmail:   user.Email,
+				ActorRole:    user.Role,
+				Action:       "auth.login",
+				ResourceType: "session",
+				Status:       "failure",
+				Metadata:     map[string]any{"reason": "invalid_credentials"},
+			})
+		}
 		return AuthResponse{}, ErrInvalidCredentials
 	}
 
 	// Pastikan status akun sudah aktif
 	if user.Status == "pending" {
+		if a.auditLogger != nil {
+			a.auditLogger.Log(ctx, shared.AuditEntry{
+				ActorID:      &user.ID,
+				ActorEmail:   user.Email,
+				ActorRole:    user.Role,
+				Action:       "auth.login",
+				ResourceType: "session",
+				Status:       "failure",
+				Metadata:     map[string]any{"reason": "pending_verification"},
+			})
+		}
 		return AuthResponse{}, ErrAccountNotVerified
 	} else if user.Status != "active" {
+		if a.auditLogger != nil {
+			a.auditLogger.Log(ctx, shared.AuditEntry{
+				ActorID:      &user.ID,
+				ActorEmail:   user.Email,
+				ActorRole:    user.Role,
+				Action:       "auth.login",
+				ResourceType: "session",
+				Status:       "failure",
+				Metadata:     map[string]any{"reason": "account_inactive"},
+			})
+		}
 		return AuthResponse{}, errors.New("account is not active yet, please check your verification link in your mailbox")
 	}
 
@@ -207,6 +276,18 @@ func (a *authService) Login(ctx context.Context, request LoginUserRequest) (Auth
 	refreshKey := fmt.Sprintf("refresh:%s", refreshToken)
 	if err := a.redis.Set(ctx, refreshKey, user.ID.String(), 7*24*time.Hour).Err(); err != nil {
 		return AuthResponse{}, fmt.Errorf("failed to save refresh token to redis: %w", err)
+	}
+
+	if a.auditLogger != nil {
+		a.auditLogger.Log(ctx, shared.AuditEntry{
+			ActorID:      &user.ID,
+			ActorEmail:   user.Email,
+			ActorRole:    user.Role,
+			Action:       "auth.login",
+			ResourceType: "session",
+			ResourceID:   user.ID.String(),
+			Status:       "success",
+		})
 	}
 
 	// Return AuthResponse
@@ -317,6 +398,14 @@ func (a *authService) Logout(ctx context.Context, refreshToken string) error {
 		_ = a.redis.Del(ctx, key).Err()
 	}
 
+	if a.auditLogger != nil {
+		a.auditLogger.Log(ctx, shared.AuditEntry{
+			Action:       "auth.logout",
+			ResourceType: "session",
+			Status:       "success",
+		})
+	}
+
 	return nil
 }
 
@@ -364,6 +453,18 @@ func (a *authService) ForgotPassword(ctx context.Context, request ForgotPassword
 		if _, err := a.asynqClient.EnqueueContext(ctx, task); err != nil {
 			return fmt.Errorf("failed to enqueue reset email task: %w", err)
 		}
+	}
+
+	if a.auditLogger != nil {
+		a.auditLogger.Log(ctx, shared.AuditEntry{
+			ActorID:      &user.ID,
+			ActorEmail:   user.Email,
+			ActorRole:    user.Role,
+			Action:       "auth.forgot_password_requested",
+			ResourceType: "user",
+			ResourceID:   user.ID.String(),
+			Status:       "success",
+		})
 	}
 
 	return nil
@@ -440,6 +541,21 @@ func (a *authService) ResetPassword(ctx context.Context, request ResetPasswordRe
 		if err == nil && val == user.ID.String() {
 			_ = a.redis.Del(ctx, k).Err()
 		}
+	}
+
+	if a.auditLogger != nil {
+		a.auditLogger.Log(ctx, shared.AuditEntry{
+			ActorID:      &user.ID,
+			ActorEmail:   user.Email,
+			ActorRole:    user.Role,
+			Action:       "auth.password_reset",
+			ResourceType: "user",
+			ResourceID:   user.ID.String(),
+			Status:       "success",
+			Metadata: map[string]any{
+				"new_token_version": newVersion,
+			},
+		})
 	}
 
 	return nil
@@ -548,4 +664,75 @@ func (a *authService) ListUsers(ctx context.Context) ([]UserResponse, error) {
 	}
 
 	return response, nil
+}
+
+func (a *authService) ListAuditLogs(ctx context.Context, page, limit int32) (PaginatedAuditLogsResponse, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	offset := (page - 1) * limit
+
+	totalCount, err := a.querier.CountAuditLogs(ctx)
+	if err != nil {
+		return PaginatedAuditLogsResponse{}, fmt.Errorf("failed to count audit logs: %w", err)
+	}
+
+	logs, err := a.querier.ListAuditLogs(ctx, db.ListAuditLogsParams{
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		return PaginatedAuditLogsResponse{}, fmt.Errorf("failed to list audit logs: %w", err)
+	}
+
+	data := make([]AuditLogResponse, len(logs))
+	for i, l := range logs {
+		var actorID *string
+		if l.ActorID.Valid {
+			idStr := uuid.UUID(l.ActorID.Bytes).String()
+			actorID = &idStr
+		}
+		var actorEmail *string
+		if l.ActorEmail.Valid {
+			actorEmail = &l.ActorEmail.String
+		}
+		var actorRole *string
+		if l.ActorRole.Valid {
+			actorRole = &l.ActorRole.String
+		}
+		var resourceID *string
+		if l.ResourceID.Valid {
+			resourceID = &l.ResourceID.String
+		}
+
+		var metadata map[string]any
+		if len(l.Metadata) > 0 {
+			_ = json.Unmarshal(l.Metadata, &metadata)
+		}
+
+		data[i] = AuditLogResponse{
+			ID:           l.ID.String(),
+			ActorID:      actorID,
+			ActorEmail:   actorEmail,
+			ActorRole:    actorRole,
+			Action:       l.Action,
+			ResourceType: l.ResourceType,
+			ResourceID:   resourceID,
+			Status:       l.Status,
+			IPAddress:    l.IpAddress,
+			UserAgent:    l.UserAgent,
+			Metadata:     metadata,
+			CreatedAt:    l.CreatedAt,
+		}
+	}
+
+	return PaginatedAuditLogsResponse{
+		Data:       data,
+		TotalCount: totalCount,
+		Page:       page,
+		Limit:      limit,
+	}, nil
 }
