@@ -94,7 +94,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./infra/observability/grafana/provisioning/datasources/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro,Z
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro,Z
       - grafana_data:/var/lib/grafana:Z
     depends_on:
       - prometheus
