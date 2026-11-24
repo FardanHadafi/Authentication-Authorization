@@ -29,6 +29,12 @@
       <Card.Content class="space-y-4">
         {#if data.user}
           <div class="rounded-lg border bg-muted/40 p-4 space-y-2.5 text-sm">
+            {#if data.user.full_name}
+              <div class="flex justify-between items-center py-1 border-b border-border/50">
+                <span class="text-muted-foreground">Nama Lengkap</span>
+                <span class="font-medium text-foreground">{data.user.full_name}</span>
+              </div>
+            {/if}
             <div class="flex justify-between items-center py-1 border-b border-border/50">
               <span class="text-muted-foreground">User ID</span>
               <span class="font-mono text-xs font-medium text-foreground truncate max-w-55">{data.user.id}</span>
@@ -37,13 +43,33 @@
               <span class="text-muted-foreground">Email</span>
               <span class="font-medium text-foreground">{data.user.email}</span>
             </div>
-            <div class="flex justify-between items-center py-1">
+            <div class="flex justify-between items-center py-1 {data.user.status ? 'border-b border-border/50' : ''}">
               <span class="text-muted-foreground">Role</span>
               <span class="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary capitalize">
                 {data.user.role}
               </span>
             </div>
+            {#if data.user.status}
+              <div class="flex justify-between items-center py-1">
+                <span class="text-muted-foreground">Status Akun</span>
+                <span class="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400 capitalize">
+                  {data.user.status}
+                </span>
+              </div>
+            {/if}
           </div>
+
+          {#if data.user.role === 'admin'}
+            <div class="rounded-lg border border-destructive/20 bg-destructive/5 p-4 flex items-center justify-between">
+              <div>
+                <p class="text-sm font-semibold text-foreground">Akses Administrator</p>
+                <p class="text-xs text-muted-foreground">Kelola pengguna dan hak akses sistem.</p>
+              </div>
+              <Button href="/admin" variant="default" size="sm">
+                Panel Admin &rarr;
+              </Button>
+            </div>
+          {/if}
         {/if}
       </Card.Content>
 

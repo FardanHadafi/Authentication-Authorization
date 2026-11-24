@@ -104,15 +104,23 @@ func main() {
 	authHandler := auth.NewAuthHandler(authService, logger, validate)
 
 	// Auth Routes
-	auth.RegisterRoutes(mux, authHandler)
+	auth.RegisterRoutes(mux, authHandler, tokenManager)
 
 	port := os.Getenv("API_PORT")
 	if port == "" {
 		port = "8080"
 	}
+
+	router := shared.Chain(
+		mux,
+		shared.RequestIDMiddleware,
+		shared.RecoveryMiddleware(logger),
+		shared.LoggingMiddleware(logger),
+	)
+
 	server := &http.Server{
 		Addr:         ":" + port,
-		Handler:      mux,
+		Handler:      router,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  1 * time.Minute,

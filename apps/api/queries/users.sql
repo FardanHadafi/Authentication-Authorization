@@ -26,3 +26,8 @@ UPDATE users
 SET password_hash = $2,
     updated_at = NOW()
 WHERE id = $1;
+
+-- name: ListUsers :many
+SELECT id, full_name, email, role, status, created_at, updated_at
+FROM users
+ORDER BY created_at DESC LIMIT 10;

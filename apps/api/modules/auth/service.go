@@ -24,6 +24,8 @@ var (
 	ErrInvalidCredentials        = errors.New("invalid credentials")
 	ErrAccountNotVerified        = errors.New("email not verified, please check your email inbox")
 	ErrRedisClientNotInitialized = errors.New("redis client not initialized")
+	ErrUserNotFound              = errors.New("user not found")
+	ErrAccountInactive           = errors.New("account inactive")
 )
 
 type AuthService interface {
@@ -35,6 +37,8 @@ type AuthService interface {
 	ForgotPassword(ctx context.Context, request ForgotPasswordRequest) error
 	ResetPassword(ctx context.Context, request ResetPasswordRequest) error
 	ResendVerificationEmail(ctx context.Context, request ResendVerificationEmailRequest) error
+	GetProfile(ctx context.Context, userID uuid.UUID) (UserResponse, error)
+	ListUsers(ctx context.Context) ([]UserResponse, error)
 }
 
 type authService struct {
@@ -480,4 +484,55 @@ func (a *authService) ResendVerificationEmail(ctx context.Context, request Resen
 	}
 
 	return nil
+}
+
+func (a *authService) GetProfile(ctx context.Context, userID uuid.UUID) (UserResponse, error) {
+	if userID == uuid.Nil {
+		return UserResponse{}, ErrUserNotFound
+	}
+
+	user, err := a.querier.GetUserByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return UserResponse{}, ErrUserNotFound
+		}
+
+		return UserResponse{}, fmt.Errorf("failed to get user from database: %w", err)
+	}
+
+	if user.Status != "active" {
+		return UserResponse{}, ErrAccountInactive
+	}
+
+	return UserResponse{
+		ID:        user.ID.String(),
+		FullName:  user.FullName,
+		Email:     user.Email,
+		Role:      user.Role,
+		Status:    user.Status,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	}, nil
+}
+
+func (a *authService) ListUsers(ctx context.Context) ([]UserResponse, error) {
+	users, err := a.querier.ListUsers(ctx)
+	if err != nil {
+		return []UserResponse{}, fmt.Errorf("failed to get users from database: %w", err)
+	}
+
+	response := make([]UserResponse, len(users))
+	for i, u := range users {
+		response[i] = UserResponse{
+			ID:        u.ID.String(),
+			FullName:  u.FullName,
+			Email:     u.Email,
+			Role:      u.Role,
+			Status:    u.Status,
+			CreatedAt: u.CreatedAt,
+			UpdatedAt: u.UpdatedAt,
+		}
+	}
+
+	return response, nil
 }
