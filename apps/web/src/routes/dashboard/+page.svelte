@@ -217,39 +217,67 @@
 						</form>
 					{:else}
 						<!-- Langkah Setup MFA Terbuka -->
-						<div class="rounded-lg border p-4 space-y-4 bg-muted/30">
-							<div class="space-y-1">
-								<p class="text-sm font-semibold text-foreground">1. Pindai / Masukkan Secret Key ke Google Authenticator</p>
+						<div class="rounded-lg border p-4 sm:p-5 space-y-5 bg-muted/30">
+							<!-- 1. SCAN QR CODE -->
+							<div class="space-y-3">
+								<p class="text-sm font-semibold text-foreground">1. Pindai (Scan) QR Code Menggunakan Google Authenticator</p>
 								<p class="text-xs text-muted-foreground">
-									Buka Google Authenticator, pilih "Add Code" -> "Enter a setup key", lalu masukkan kode secret berikut:
+									Buka aplikasi <strong>Google Authenticator</strong> (atau Microsoft Authenticator / Apple Keychain) di ponsel Anda, ketuk tombol <strong>+</strong> lalu pilih <strong>Pindai kode QR (Scan a QR code)</strong>:
 								</p>
-							</div>
 
-							<div class="flex items-center gap-2">
-								<code class="rounded bg-muted px-3 py-1.5 font-mono text-sm font-bold tracking-wider text-foreground">
-									{form.setupData.secret}
-								</code>
-								<Button
-									type="button"
-									variant="outline"
-									size="sm"
-									onclick={() => copyToClipboard(form?.setupData?.secret || '')}
-								>
-									{#if copiedSecret}
-										<Check class="size-4 text-emerald-500 mr-1" />
-										Tersalin!
+								<!-- Box Gambar QR Code -->
+								<div class="flex flex-col items-center justify-center p-4 bg-white rounded-xl border shadow-sm w-fit mx-auto sm:mx-0">
+									{#if form.setupData.qrCodeDataUrl}
+										<img
+											src={form.setupData.qrCodeDataUrl}
+											alt="QR Code Google Authenticator"
+											class="size-52 object-contain"
+										/>
 									{:else}
-										<Copy class="size-4 mr-1" />
-										Salin
+										<div class="size-52 flex items-center justify-center text-xs text-muted-foreground">
+											Memuat QR Code...
+										</div>
 									{/if}
-								</Button>
+									<span class="text-[11px] font-medium text-neutral-500 mt-2">
+										Arahkan kamera ponsel Anda ke QR code di atas
+									</span>
+								</div>
+
+								<!-- Alternatif Manual Key -->
+								<details class="text-xs text-muted-foreground pt-1">
+									<summary class="cursor-pointer hover:text-foreground font-medium select-none">
+										Tidak bisa memindai QR code? Masukkan key secara manual &rarr;
+									</summary>
+									<div class="mt-2 p-3 rounded-lg bg-muted/60 border space-y-2">
+										<p class="text-[11px]">Salin Secret Key ini dan tempelkan di aplikasi Authenticator Anda (Type: Time-based):</p>
+										<div class="flex items-center gap-2">
+											<code class="rounded bg-background px-3 py-1.5 font-mono text-xs sm:text-sm font-bold tracking-wider text-foreground select-all border">
+												{form.setupData.secret}
+											</code>
+											<Button
+												type="button"
+												variant="outline"
+												size="sm"
+												onclick={() => copyToClipboard(form?.setupData?.secret || '')}
+											>
+												{#if copiedSecret}
+													<Check class="size-4 text-emerald-500 mr-1" />
+													Tersalin!
+												{:else}
+													<Copy class="size-4 mr-1" />
+													Salin
+												{/if}
+											</Button>
+										</div>
+									</div>
+								</details>
 							</div>
 
 							<!-- 8 Recovery Codes -->
-							<div class="space-y-1 pt-2">
+							<div class="space-y-1.5 pt-2 border-t border-border/60">
 								<p class="text-sm font-semibold text-foreground">2. Simpan 8 Kode Pemulihan Darurat (One-Time Backup Codes)</p>
 								<p class="text-xs text-muted-foreground">
-									Simpan kode-kode di bawah ini di tempat aman. Setiap kode hanya bisa digunakan satu kali jika Anda kehilangan ponsel:
+									Simpan kode cadangan berikut di tempat aman. Masing-masing kode hanya bisa digunakan satu kali jika ponsel hilang:
 								</p>
 								<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2">
 									{#each form.setupData.recoveryCodes as code}
@@ -275,7 +303,7 @@
 							>
 								<div class="space-y-1.5">
 									<Label for="enable_code" class="text-sm font-semibold">
-										3. Masukkan 6-Digit Kode Pertama dari Aplikasi:
+										3. Masukkan 6-Digit Kode Pertama dari Google Authenticator:
 									</Label>
 									<Input
 										id="enable_code"
@@ -285,6 +313,7 @@
 										placeholder="123456"
 										class="font-mono text-center text-lg tracking-widest max-w-48"
 										required
+										autofocus
 									/>
 								</div>
 								<Button type="submit" size="sm" disabled={isSubmitting}>

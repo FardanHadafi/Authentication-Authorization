@@ -99,6 +99,7 @@ type UserPermissionsResponse struct {
 type MFASetupResponse struct {
 	Secret        string   `json:"secret"`
 	QRCodeURL     string   `json:"qr_code_url"`
+	QRCodeDataURL string   `json:"qr_code_data_url"`
 	RecoveryCodes []string `json:"recovery_codes"`
 }
 

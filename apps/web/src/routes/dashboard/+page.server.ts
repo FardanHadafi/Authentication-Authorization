@@ -1,5 +1,6 @@
 import { fail, redirect, type Actions } from "@sveltejs/kit";
 import type { PageServerLoad } from "./$types";
+import QRCode from "qrcode";
 
 const API_URL = import.meta.env.VITE_API_URL!;
 
@@ -97,10 +98,23 @@ export const actions: Actions = {
       }
 
       const setupData = await res.json();
+      let qrCodeDataUrl = setupData.qr_code_data_url;
+      if (!qrCodeDataUrl && setupData.qr_code_url) {
+        try {
+          qrCodeDataUrl = await QRCode.toDataURL(setupData.qr_code_url, {
+            width: 250,
+            margin: 2
+          });
+        } catch {
+          // ignore error
+        }
+      }
+
       return {
         setupData: {
           secret: setupData.secret,
           qrCodeUrl: setupData.qr_code_url,
+          qrCodeDataUrl: qrCodeDataUrl || '',
           recoveryCodes: setupData.recovery_codes || []
         }
       };

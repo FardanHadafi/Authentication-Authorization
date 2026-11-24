@@ -876,6 +876,11 @@ func (a *authService) SetupMFA(ctx context.Context, userID uuid.UUID) (MFASetupR
 		return MFASetupResponse{}, fmt.Errorf("failed to generate TOTP secret: %w", err)
 	}
 
+	qrCodeDataURL, err := shared.GenerateQRCodePNG(key, 250, 250)
+	if err != nil {
+		return MFASetupResponse{}, fmt.Errorf("failed to generate QR code: %w", err)
+	}
+
 	plainCodes, hashedCodes, err := shared.GenerateRecoveryCodes(8)
 	if err != nil {
 		return MFASetupResponse{}, fmt.Errorf("failed to generate recovery codes: %w", err)
@@ -902,6 +907,7 @@ func (a *authService) SetupMFA(ctx context.Context, userID uuid.UUID) (MFASetupR
 	return MFASetupResponse{
 		Secret:        key.Secret(),
 		QRCodeURL:     key.URL(),
+		QRCodeDataURL: qrCodeDataURL,
 		RecoveryCodes: plainCodes,
 	}, nil
 }

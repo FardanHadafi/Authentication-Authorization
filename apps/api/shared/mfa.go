@@ -1,10 +1,13 @@
 package shared
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"image/png"
 	"slices"
 	"strings"
 
@@ -26,6 +29,25 @@ func GenerateTOTPSecret(accountName string) (*otp.Key, error) {
 		Digits:      otp.DigitsSix,
 		Algorithm:   otp.AlgorithmSHA1,
 	})
+}
+
+// GenerateQRCodePNG menghasilkan base64 PNG data URL dari otp.Key untuk discan via Google Authenticator
+func GenerateQRCodePNG(key *otp.Key, width, height int) (string, error) {
+	if width <= 0 || height <= 0 {
+		width = 250
+		height = 250
+	}
+	img, err := key.Image(width, height)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate QR code image: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return "", fmt.Errorf("failed to encode QR code as PNG: %w", err)
+	}
+
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
 // ValidateTOTPCode memverifikasi passcode 6-digit TOTP terhadap secret

@@ -1219,6 +1219,10 @@ components:
           type: string
           description: Standard otpauth URI for QR code scanning in Google Authenticator
           example: "otpauth://totp/AuthAPI:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=AuthAPI"
+        qr_code_data_url:
+          type: string
+          description: Base64 data URL PNG image for immediate QR code scanning
+          example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
         recovery_codes:
           type: array
           items:
