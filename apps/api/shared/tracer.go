@@ -81,6 +81,12 @@ func TracingMiddleware(serviceName string) Middleware {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Abaikan tracing untuk scraping /metrics
+			if r.URL.Path == "/metrics" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// Extract context W3C TraceContext dari incoming header jika ada
 			ctx := propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 

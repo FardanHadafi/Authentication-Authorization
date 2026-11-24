@@ -117,7 +117,7 @@ func main() {
 	// OpenTelemetry Tracing ke Grafana Tempo
 	tempoEndpoint := os.Getenv("TEMPO_ENDPOINT")
 	if tempoEndpoint == "" {
-		tempoEndpoint = "localhost:4317"
+		tempoEndpoint = "127.0.0.1:4317"
 	}
 
 	_, shutdownTracer, err := shared.InitTracer(rootCtx, "auth-api", tempoEndpoint)

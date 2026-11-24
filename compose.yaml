@@ -62,6 +62,7 @@ services:
   tempo:
     image: docker.io/grafana/tempo:latest
     container_name: auth-tempo
+    user: "0:0"
     restart: unless-stopped
     command: ["-config.file=/etc/tempo.yaml"]
     ports:

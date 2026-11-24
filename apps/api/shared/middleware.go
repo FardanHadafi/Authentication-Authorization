@@ -133,6 +133,12 @@ func (rw *responseWriter) Unwrap() http.ResponseWriter {
 func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Abaikan logging untuk endpoint /metrics agar tidak membanjiri log
+			if r.URL.Path == "/metrics" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			start := time.Now()
 
 			// Ambil request ID dari context
