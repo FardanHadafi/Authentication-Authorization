@@ -42,25 +42,28 @@ type AuthService interface {
 	GetProfile(ctx context.Context, userID uuid.UUID) (UserResponse, error)
 	ListUsers(ctx context.Context) ([]UserResponse, error)
 	ListAuditLogs(ctx context.Context, page, limit int32) (PaginatedAuditLogsResponse, error)
+	GetUserPermissions(ctx context.Context, role string) (UserPermissionsResponse, error)
 }
 
 type authService struct {
-	querier      db.Querier
-	asynqClient  *asynq.Client
-	mailer       shared.EmailSender
-	redis        *redis.Client
-	tokenManager shared.TokenManager
-	auditLogger  shared.AuditLogger
+	querier           db.Querier
+	asynqClient       *asynq.Client
+	mailer            shared.EmailSender
+	redis             *redis.Client
+	tokenManager      shared.TokenManager
+	auditLogger       shared.AuditLogger
+	permissionChecker shared.PermissionChecker
 }
 
-func NewAuthService(querier db.Querier, asynqClient *asynq.Client, mailer shared.EmailSender, redis *redis.Client, tokenManager shared.TokenManager, auditLogger shared.AuditLogger) AuthService {
+func NewAuthService(querier db.Querier, asynqClient *asynq.Client, mailer shared.EmailSender, redis *redis.Client, tokenManager shared.TokenManager, auditLogger shared.AuditLogger, permissionChecker shared.PermissionChecker) AuthService {
 	return &authService{
-		querier:      querier,
-		asynqClient:  asynqClient,
-		mailer:       mailer,
-		redis:        redis,
-		tokenManager: tokenManager,
-		auditLogger:  auditLogger,
+		querier:           querier,
+		asynqClient:       asynqClient,
+		mailer:            mailer,
+		redis:             redis,
+		tokenManager:      tokenManager,
+		auditLogger:       auditLogger,
+		permissionChecker: permissionChecker,
 	}
 }
 
@@ -734,5 +737,19 @@ func (a *authService) ListAuditLogs(ctx context.Context, page, limit int32) (Pag
 		TotalCount: totalCount,
 		Page:       page,
 		Limit:      limit,
+	}, nil
+}
+
+func (a *authService) GetUserPermissions(ctx context.Context, role string) (UserPermissionsResponse, error) {
+	if a.permissionChecker == nil {
+		return UserPermissionsResponse{Role: role, Permissions: []string{}}, nil
+	}
+	perms, err := a.permissionChecker.GetRolePermissions(ctx, role)
+	if err != nil {
+		return UserPermissionsResponse{}, fmt.Errorf("failed to get user permissions: %w", err)
+	}
+	return UserPermissionsResponse{
+		Role:        role,
+		Permissions: perms,
 	}, nil
 }

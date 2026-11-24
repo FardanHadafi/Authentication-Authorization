@@ -26,6 +26,26 @@ type AuditLog struct {
 	CreatedAt    time.Time   `json:"created_at"`
 }
 
+type Permission struct {
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	Description pgtype.Text `json:"description"`
+	CreatedAt   time.Time   `json:"created_at"`
+}
+
+type Role struct {
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	Description pgtype.Text `json:"description"`
+	CreatedAt   time.Time   `json:"created_at"`
+}
+
+type RolePermission struct {
+	RoleID       string    `json:"role_id"`
+	PermissionID string    `json:"permission_id"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 type User struct {
 	ID           uuid.UUID `json:"id"`
 	FullName     string    `json:"full_name"`

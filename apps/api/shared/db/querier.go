@@ -11,14 +11,18 @@ import (
 )
 
 type Querier interface {
+	CheckRoleHasPermission(ctx context.Context, arg CheckRoleHasPermissionParams) (bool, error)
 	CountAuditLogs(ctx context.Context) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) (AuditLog, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
+	GetRolePermissions(ctx context.Context, roleID string) ([]string, error)
 	GetUserByEmail(ctx context.Context, lower string) (GetUserByEmailRow, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error)
 	GetUserTokenVersion(ctx context.Context, id uuid.UUID) (int32, error)
 	IncrementUserTokenVersion(ctx context.Context, id uuid.UUID) (int32, error)
 	ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]AuditLog, error)
+	ListPermissions(ctx context.Context) ([]Permission, error)
+	ListRoles(ctx context.Context) ([]Role, error)
 	ListUsers(ctx context.Context) ([]ListUsersRow, error)
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpdateUserStatus(ctx context.Context, arg UpdateUserStatusParams) error

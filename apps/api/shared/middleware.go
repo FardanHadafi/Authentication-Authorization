@@ -2,6 +2,7 @@ package shared
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -282,6 +283,27 @@ func RequireRole(allowedRoles ...string) Middleware {
 
 			if !slices.Contains(allowedRoles, claims.Role) {
 				WriteError(w, http.StatusForbidden, "forbidden: insufficient permissions")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequirePermission membatasi akses endpoint berdasarkan permission granular (PBAC)
+func RequirePermission(checker PermissionChecker, permission string) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims := GetUserClaims(r.Context())
+			if claims == nil {
+				WriteError(w, http.StatusUnauthorized, "unauthorized: no user identity found")
+				return
+			}
+
+			hasPerm, err := checker.HasPermission(r.Context(), claims.Role, permission)
+			if err != nil || !hasPerm {
+				WriteError(w, http.StatusForbidden, fmt.Sprintf("forbidden: missing required permission '%s'", permission))
 				return
 			}
 

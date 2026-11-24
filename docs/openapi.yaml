@@ -520,13 +520,51 @@ paths:
         '429':
           $ref: '#/components/responses/TooManyRequestsResponse'
 
+  /api/auth/me/permissions:
+    get:
+      tags:
+        - Authentication
+      summary: Get active user permissions (PBAC)
+      description: |
+        Protected endpoint that returns the authenticated user's role and list of granular permissions
+        resolved through the PBAC permission engine and Redis cache.
+      operationId: getMyPermissions
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User permissions retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPermissionsResponse'
+        '401':
+          description: Unauthorized - missing or invalid access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "unauthorized"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "internal server error"
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
+
   /api/admin/users:
     get:
       tags:
         - Administration
-      summary: List all users (Admin only)
+      summary: List all users (Requires 'users:read' permission)
       description: |
-        Protected endpoint that requires both a valid JWT Bearer access token and the `admin` role.
+        Protected endpoint enforced via PBAC requiring a valid JWT Bearer access token
+        and the granular `users:read` permission.
         Returns a list of all registered users in the database.
       operationId: listUsers
       security:
@@ -571,9 +609,10 @@ paths:
     get:
       tags:
         - Administration
-      summary: List audit logs with pagination (Admin only)
+      summary: List audit logs with pagination (Requires 'audit_logs:read' permission)
       description: |
-        Protected endpoint that requires both a valid JWT Bearer access token and the `admin` role.
+        Protected endpoint enforced via PBAC requiring a valid JWT Bearer access token
+        and the granular `audit_logs:read` permission.
         Returns a paginated list of immutable security audit logs (actor, action, resource, IP, user-agent, metadata, timestamp).
       operationId: listAuditLogs
       security:
@@ -987,3 +1026,20 @@ components:
           type: string
           description: 64-character hexadecimal CSRF defense token
           example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+    UserPermissionsResponse:
+      type: object
+      required:
+        - role
+        - permissions
+      properties:
+        role:
+          type: string
+          description: Current user role identifier
+          example: "admin"
+        permissions:
+          type: array
+          items:
+            type: string
+          description: List of assigned granular PBAC permissions
+          example: ["users:read", "users:write", "users:delete", "audit_logs:read", "profile:read", "profile:write"]

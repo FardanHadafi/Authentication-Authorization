@@ -28,6 +28,7 @@ type AuthHandler interface {
 	ListUsers(w http.ResponseWriter, r *http.Request)
 	ListAuditLogs(w http.ResponseWriter, r *http.Request)
 	GetCSRFToken(w http.ResponseWriter, r *http.Request)
+	GetPermissions(w http.ResponseWriter, r *http.Request)
 }
 
 type authHandler struct {
@@ -381,4 +382,21 @@ func (h *authHandler) GetCSRFToken(w http.ResponseWriter, r *http.Request) {
 	isProd := os.Getenv("APP_ENV") == "production"
 	shared.SetCSRFCookie(w, token, isProd)
 	_ = shared.WriteJSON(w, http.StatusOK, CSRFTokenResponse{CSRFToken: token})
+}
+
+func (h *authHandler) GetPermissions(w http.ResponseWriter, r *http.Request) {
+	claims := shared.GetUserClaims(r.Context())
+	if claims == nil {
+		shared.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	res, err := h.authService.GetUserPermissions(r.Context(), claims.Role)
+	if err != nil {
+		h.logger.Error("failed to get user permissions", "error", err)
+		shared.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	_ = shared.WriteJSON(w, http.StatusOK, res)
 }

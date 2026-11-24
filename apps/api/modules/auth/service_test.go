@@ -67,7 +67,7 @@ func TestAuthService_ListAuditLogs(t *testing.T) {
 		count:     1,
 	}
 
-	svc := NewAuthService(mq, nil, nil, nil, nil, nil)
+	svc := NewAuthService(mq, nil, nil, nil, nil, nil, nil)
 
 	ctx := context.Background()
 	res, err := svc.ListAuditLogs(ctx, 1, 20)
@@ -98,5 +98,36 @@ func TestAuthService_ListAuditLogs(t *testing.T) {
 	}
 	if entry.Metadata["ip"] != "127.0.0.1" {
 		t.Errorf("expected metadata ip 127.0.0.1, got %v", entry.Metadata["ip"])
+	}
+}
+
+type mockPermissionCheckerForService struct {
+	perms []string
+}
+
+func (m *mockPermissionCheckerForService) HasPermission(ctx context.Context, role, permission string) (bool, error) {
+	return true, nil
+}
+
+func (m *mockPermissionCheckerForService) GetRolePermissions(ctx context.Context, role string) ([]string, error) {
+	return m.perms, nil
+}
+
+func TestAuthService_GetUserPermissions(t *testing.T) {
+	pc := &mockPermissionCheckerForService{
+		perms: []string{"users:read", "audit_logs:read"},
+	}
+	svc := NewAuthService(nil, nil, nil, nil, nil, nil, pc)
+
+	res, err := svc.GetUserPermissions(context.Background(), "admin")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if res.Role != "admin" {
+		t.Errorf("expected role admin, got %s", res.Role)
+	}
+	if len(res.Permissions) != 2 {
+		t.Errorf("expected 2 permissions, got %d", len(res.Permissions))
 	}
 }

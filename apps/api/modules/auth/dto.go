@@ -87,3 +87,8 @@ type PaginatedAuditLogsResponse struct {
 type CSRFTokenResponse struct {
 	CSRFToken string `json:"csrf_token"`
 }
+
+type UserPermissionsResponse struct {
+	Role        string   `json:"role"`
+	Permissions []string `json:"permissions"`
+}

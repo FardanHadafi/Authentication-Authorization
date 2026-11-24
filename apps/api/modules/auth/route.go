@@ -8,7 +8,7 @@ import (
 	"github.com/go-redis/redis_rate/v10"
 )
 
-func RegisterRoutes(mux *http.ServeMux, handler AuthHandler, tokenManager shared.TokenManager, limiter *redis_rate.Limiter, revocationChecker shared.TokenRevocationChecker) {
+func RegisterRoutes(mux *http.ServeMux, handler AuthHandler, tokenManager shared.TokenManager, limiter *redis_rate.Limiter, revocationChecker shared.TokenRevocationChecker, permissionChecker shared.PermissionChecker) {
 	mux.Handle("POST /api/auth/register", shared.Chain(
 		http.HandlerFunc(handler.Register),
 		shared.RateLimitMiddleware(limiter, shared.IPKey("register"), 10, time.Hour),
@@ -52,18 +52,23 @@ func RegisterRoutes(mux *http.ServeMux, handler AuthHandler, tokenManager shared
 		shared.RequireAuth(tokenManager, revocationChecker),
 		shared.RateLimitMiddleware(limiter, shared.UserKey("me"), 60, time.Minute),
 	))
+	mux.Handle("GET /api/auth/me/permissions", shared.Chain(
+		http.HandlerFunc(handler.GetPermissions),
+		shared.RequireAuth(tokenManager, revocationChecker),
+		shared.RateLimitMiddleware(limiter, shared.UserKey("me-permissions"), 60, time.Minute),
+	))
 
-	// Admin Routes
+	// Admin Routes (Granular PBAC Enforcement)
 	mux.Handle("GET /api/admin/users", shared.Chain(
 		http.HandlerFunc(handler.ListUsers),
 		shared.RequireAuth(tokenManager, revocationChecker),
-		shared.RequireRole("admin"),
+		shared.RequirePermission(permissionChecker, "users:read"),
 		shared.RateLimitMiddleware(limiter, shared.UserKey("admin-users"), 30, time.Minute),
 	))
 	mux.Handle("GET /api/admin/audit-logs", shared.Chain(
 		http.HandlerFunc(handler.ListAuditLogs),
 		shared.RequireAuth(tokenManager, revocationChecker),
-		shared.RequireRole("admin"),
+		shared.RequirePermission(permissionChecker, "audit_logs:read"),
 		shared.RateLimitMiddleware(limiter, shared.UserKey("admin-audit-logs"), 60, time.Minute),
 	))
 }

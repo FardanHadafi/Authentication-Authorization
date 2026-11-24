@@ -102,8 +102,11 @@ func main() {
 	// Audit Logger (Asynchronous non-blocking security audit logger)
 	auditLogger := shared.NewAuditLogger(queries, logger, 1000)
 
+	// Permission Checker (PBAC with Redis caching)
+	permissionChecker := shared.NewPermissionChecker(queries, redisClient)
+
 	// Auth Service
-	authService := auth.NewAuthService(queries, asynqClient, mailer, redisClient, tokenManager, auditLogger)
+	authService := auth.NewAuthService(queries, asynqClient, mailer, redisClient, tokenManager, auditLogger, permissionChecker)
 
 	// Auth Handler
 	authHandler := auth.NewAuthHandler(authService, logger, validate)
@@ -115,7 +118,7 @@ func main() {
 	revocationChecker := shared.NewRevocationChecker(redisClient)
 
 	// Auth Routes
-	auth.RegisterRoutes(mux, authHandler, tokenManager, limiter, revocationChecker)
+	auth.RegisterRoutes(mux, authHandler, tokenManager, limiter, revocationChecker, permissionChecker)
 
 	// Prometheus Metrics Endpoint
 	mux.Handle("GET /metrics", promhttp.Handler())
