@@ -70,7 +70,7 @@ func TestAuthService_ListAuditLogs(t *testing.T) {
 		count:     1,
 	}
 
-	svc := NewAuthService(mq, nil, nil, nil, nil, nil, nil)
+	svc := NewAuthService(mq, nil, nil, nil, nil, nil, nil, nil)
 
 	ctx := context.Background()
 	res, err := svc.ListAuditLogs(ctx, 1, 20)
@@ -120,7 +120,7 @@ func TestAuthService_GetUserPermissions(t *testing.T) {
 	pc := &mockPermissionCheckerForService{
 		perms: []string{"users:read", "audit_logs:read"},
 	}
-	svc := NewAuthService(nil, nil, nil, nil, nil, nil, pc)
+	svc := NewAuthService(nil, nil, nil, nil, nil, nil, nil, pc)
 
 	res, err := svc.GetUserPermissions(context.Background(), "admin")
 	if err != nil {
@@ -176,7 +176,7 @@ func TestAuthService_MFAFlow(t *testing.T) {
 		user: user,
 	}
 
-	svc := NewAuthService(mq, nil, nil, rdb, nil, nil, nil)
+	svc := NewAuthService(mq, nil, nil, nil, rdb, nil, nil, nil)
 	ctx := context.Background()
 
 	// 1. Setup MFA
@@ -211,5 +211,113 @@ func TestAuthService_MFAFlow(t *testing.T) {
 
 	if !mq.mfaEnabled {
 		t.Errorf("expected user in DB to have MFA enabled")
+	}
+}
+
+type mockResetPasswordQuerier struct {
+	db.Querier
+	user              db.GetUserByIDRow
+	updatedPassword   string
+	incrementedTimes  int
+}
+
+func (m *mockResetPasswordQuerier) GetUserByID(ctx context.Context, id uuid.UUID) (db.GetUserByIDRow, error) {
+	return m.user, nil
+}
+
+func (m *mockResetPasswordQuerier) UpdateUserPassword(ctx context.Context, arg db.UpdateUserPasswordParams) error {
+	m.updatedPassword = arg.PasswordHash
+	return nil
+}
+
+func (m *mockResetPasswordQuerier) IncrementUserTokenVersion(ctx context.Context, id uuid.UUID) (int32, error) {
+	m.incrementedTimes++
+	return 2, nil
+}
+
+type mockTransactor struct {
+	txCalled bool
+	q        db.Querier
+}
+
+func (m *mockTransactor) RunInTx(ctx context.Context, fn func(q db.Querier) error) error {
+	m.txCalled = true
+	return fn(m.q)
+}
+
+func TestAuthService_ResetPassword_AtomicTransactionAndTokenRevocation(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	userID := uuid.New()
+	user := db.GetUserByIDRow{
+		ID:           userID,
+		Email:        "reset@example.com",
+		Status:       "active",
+		TokenVersion: 1,
+	}
+
+	mq := &mockResetPasswordQuerier{user: user}
+	mtx := &mockTransactor{q: mq}
+
+	svc := NewAuthService(mq, mtx, nil, nil, rdb, nil, nil, nil)
+	ctx := context.Background()
+
+	// Simpan reset token di Redis
+	resetToken := "valid-reset-token"
+	_ = rdb.Set(ctx, "reset:"+resetToken, userID.String(), 15*time.Minute).Err()
+
+	// Simpan 2 refresh token untuk user ini dalam set user:<id>:refresh_tokens
+	_ = rdb.Set(ctx, "refresh:token1", userID.String(), 7*24*time.Hour).Err()
+	_ = rdb.Set(ctx, "refresh:token2", userID.String(), 7*24*time.Hour).Err()
+	_ = rdb.SAdd(ctx, "user:"+userID.String()+":refresh_tokens", "token1", "token2").Err()
+
+	// Eksekusi ResetPassword
+	err = svc.ResetPassword(ctx, ResetPasswordRequest{
+		Token:       resetToken,
+		NewPassword: "newSecurePassword123!",
+	})
+	if err != nil {
+		t.Fatalf("expected ResetPassword to succeed, got %v", err)
+	}
+
+	// 1. Verifikasi transaksi database dipanggil
+	if !mtx.txCalled {
+		t.Errorf("expected ResetPassword to execute inside a database transaction")
+	}
+	if mq.updatedPassword == "" {
+		t.Errorf("expected password to be updated in DB")
+	}
+	if mq.incrementedTimes != 1 {
+		t.Errorf("expected IncrementUserTokenVersion to be called 1 time, got %d", mq.incrementedTimes)
+	}
+
+	// 2. Verifikasi reset token langsung terhapus (one-time token enforcement)
+	exists, _ := rdb.Exists(ctx, "reset:"+resetToken).Result()
+	if exists != 0 {
+		t.Errorf("expected reset token to be consumed and deleted from redis")
+	}
+
+	// 3. Verifikasi token_version di-cache ke Redis
+	versionVal, _ := rdb.Get(ctx, "user:"+userID.String()+":token_version").Result()
+	if versionVal != "2" {
+		t.Errorf("expected cached token_version to be 2, got %s", versionVal)
+	}
+
+	// 4. Verifikasi seluruh refresh token user terhapus secara batch
+	exists1, _ := rdb.Exists(ctx, "refresh:token1").Result()
+	exists2, _ := rdb.Exists(ctx, "refresh:token2").Result()
+	if exists1 != 0 || exists2 != 0 {
+		t.Errorf("expected all refresh tokens to be revoked from redis")
+	}
+	setLen, _ := rdb.SCard(ctx, "user:"+userID.String()+":refresh_tokens").Result()
+	if setLen != 0 {
+		t.Errorf("expected user refresh_tokens set to be deleted or empty, got count %d", setLen)
 	}
 }

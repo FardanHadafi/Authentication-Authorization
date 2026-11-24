@@ -2,11 +2,10 @@ package shared
 
 import (
 	"fmt"
-	"net/smtp"
-	"strings"
 	"time"
 
 	"github.com/sony/gobreaker/v2"
+	"github.com/wneessen/go-mail"
 )
 
 type EmailSender interface {
@@ -17,19 +16,21 @@ type EmailSender interface {
 
 type mailer struct {
 	host string
-	port string
+	port int
 	from string
-	cb   *gobreaker.CircuitBreaker[any] // Circuit Breaker
+	cb   *gobreaker.CircuitBreaker[any]
 }
 
-func NewMailer(host, port, from string) EmailSender {
-	// Konfigurasi circuit breaker sederhana & efektif
+// NewMailer creates an EmailSender powered by go-mail and protected by a circuit breaker.
+func NewMailer(host string, port int, from string) EmailSender {
+	if port <= 0 {
+		port = 1025
+	}
 	cbSettings := gobreaker.Settings{
 		Name:        "SMTP-CircuitBreaker",
 		MaxRequests: 3,
 		Timeout:     30 * time.Second,
 		ReadyToTrip: func(counts gobreaker.Counts) bool {
-			// Trip (buka sirkuit) jika gagal berturut2 3x
 			return counts.ConsecutiveFailures >= 3
 		},
 	}
@@ -42,11 +43,38 @@ func NewMailer(host, port, from string) EmailSender {
 	}
 }
 
-func (m *mailer) SendVerificationEmail(toMail, fullName, verificationLink string) error {
-	// Eksekusi pengiriman di dalam circuit breaker
+func (m *mailer) send(toMail, subject, htmlBody string) error {
 	_, err := m.cb.Execute(func() (any, error) {
-		subject := "Verifikasi Email Akun Anda"
-		body := fmt.Sprintf(`<!DOCTYPE html>
+		msg := mail.NewMsg()
+		if err := msg.From(m.from); err != nil {
+			return nil, fmt.Errorf("invalid from address: %w", err)
+		}
+		if err := msg.To(toMail); err != nil {
+			return nil, fmt.Errorf("invalid to address: %w", err)
+		}
+		msg.Subject(subject)
+		msg.SetBodyString(mail.TypeTextHTML, htmlBody)
+
+		client, err := mail.NewClient(m.host,
+			mail.WithPort(m.port),
+			mail.WithTLSPolicy(mail.TLSOpportunistic),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SMTP client: %w", err)
+		}
+
+		if err := client.DialAndSend(msg); err != nil {
+			return nil, fmt.Errorf("failed to send email via SMTP: %w", err)
+		}
+
+		return nil, nil
+	})
+	return err
+}
+
+func (m *mailer) SendVerificationEmail(toMail, fullName, verificationLink string) error {
+	subject := "Verifikasi Email Akun Anda"
+	body := fmt.Sprintf(`<!DOCTYPE html>
 <html>
 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 20px;">
 	<h2 style="color: #0f172a;">Halo, %s!</h2>
@@ -63,27 +91,12 @@ func (m *mailer) SendVerificationEmail(toMail, fullName, verificationLink string
 </body>
 </html>`, fullName, verificationLink, verificationLink, verificationLink)
 
-		var message strings.Builder
-		fmt.Fprintf(&message, "From: %s\r\n", m.from)
-		fmt.Fprintf(&message, "To: %s\r\n", toMail)
-		fmt.Fprintf(&message, "Subject: %s\r\n", subject)
-		message.WriteString("MIME-Version: 1.0\r\n")
-		message.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
-		message.WriteString("\r\n")
-		message.WriteString(body)
-
-		address := fmt.Sprintf("%s:%s", m.host, m.port)
-		return nil, smtp.SendMail(address, nil, m.from, []string{toMail}, []byte(message.String()))
-	})
-
-	return err
+	return m.send(toMail, subject, body)
 }
 
 func (m *mailer) SendResetPasswordEmail(toMail, fullName, resetLink string) error {
-	// Eksekusi pengiriman di dalam circuit breaker
-	_, err := m.cb.Execute(func() (any, error) {
-		subject := "Instruksi Reset Kata Sandi Akun Anda"
-		body := fmt.Sprintf(`<!DOCTYPE html>
+	subject := "Instruksi Reset Kata Sandi Akun Anda"
+	body := fmt.Sprintf(`<!DOCTYPE html>
 <html>
 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 20px;">
 	<h2 style="color: #0f172a;">Halo, %s!</h2>
@@ -104,27 +117,12 @@ func (m *mailer) SendResetPasswordEmail(toMail, fullName, resetLink string) erro
 </body>
 </html>`, fullName, resetLink, resetLink, resetLink)
 
-		var message strings.Builder
-		fmt.Fprintf(&message, "From: %s\r\n", m.from)
-		fmt.Fprintf(&message, "To: %s\r\n", toMail)
-		fmt.Fprintf(&message, "Subject: %s\r\n", subject)
-		message.WriteString("MIME-Version: 1.0\r\n")
-		message.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
-		message.WriteString("\r\n")
-		message.WriteString(body)
-
-		address := fmt.Sprintf("%s:%s", m.host, m.port)
-		return nil, smtp.SendMail(address, nil, m.from, []string{toMail}, []byte(message.String()))
-	})
-
-	return err
+	return m.send(toMail, subject, body)
 }
 
 func (m *mailer) SendResendVerificationEmail(toMail, fullName, verificationLink string) error {
-	// Eksekusi pengiriman di dalam circuit breaker
-	_, err := m.cb.Execute(func() (any, error) {
-		subject := "Verifikasi Email Akun Anda"
-		body := fmt.Sprintf(`<!DOCTYPE html>
+	subject := "Verifikasi Email Akun Anda"
+	body := fmt.Sprintf(`<!DOCTYPE html>
 <html>
 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 20px;">
 	<h2 style="color: #0f172a;">Halo, %s!</h2>
@@ -141,18 +139,5 @@ func (m *mailer) SendResendVerificationEmail(toMail, fullName, verificationLink 
 </body>
 </html>`, fullName, verificationLink, verificationLink, verificationLink)
 
-		var message strings.Builder
-		fmt.Fprintf(&message, "From: %s\r\n", m.from)
-		fmt.Fprintf(&message, "To: %s\r\n", toMail)
-		fmt.Fprintf(&message, "Subject: %s\r\n", subject)
-		message.WriteString("MIME-Version: 1.0\r\n")
-		message.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
-		message.WriteString("\r\n")
-		message.WriteString(body)
-
-		address := fmt.Sprintf("%s:%s", m.host, m.port)
-		return nil, smtp.SendMail(address, nil, m.from, []string{toMail}, []byte(message.String()))
-	})
-
-	return err
+	return m.send(toMail, subject, body)
 }

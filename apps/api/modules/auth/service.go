@@ -52,6 +52,7 @@ type AuthService interface {
 
 type authService struct {
 	querier           db.Querier
+	transactor        shared.Transactor
 	asynqClient       *asynq.Client
 	mailer            shared.EmailSender
 	redis             *redis.Client
@@ -60,9 +61,10 @@ type authService struct {
 	permissionChecker shared.PermissionChecker
 }
 
-func NewAuthService(querier db.Querier, asynqClient *asynq.Client, mailer shared.EmailSender, redis *redis.Client, tokenManager shared.TokenManager, auditLogger shared.AuditLogger, permissionChecker shared.PermissionChecker) AuthService {
+func NewAuthService(querier db.Querier, transactor shared.Transactor, asynqClient *asynq.Client, mailer shared.EmailSender, redis *redis.Client, tokenManager shared.TokenManager, auditLogger shared.AuditLogger, permissionChecker shared.PermissionChecker) AuthService {
 	return &authService{
 		querier:           querier,
+		transactor:        transactor,
 		asynqClient:       asynqClient,
 		mailer:            mailer,
 		redis:             redis,
@@ -70,6 +72,60 @@ func NewAuthService(querier db.Querier, asynqClient *asynq.Client, mailer shared
 		auditLogger:       auditLogger,
 		permissionChecker: permissionChecker,
 	}
+}
+
+func (a *authService) runInTx(ctx context.Context, fn func(q db.Querier) error) error {
+	if a.transactor != nil {
+		return a.transactor.RunInTx(ctx, fn)
+	}
+	return fn(a.querier)
+}
+
+func (a *authService) storeRefreshToken(ctx context.Context, userID uuid.UUID, token string) error {
+	if a.redis == nil {
+		return nil
+	}
+	refreshKey := fmt.Sprintf("refresh:%s", token)
+	userTokensKey := fmt.Sprintf("user:%s:refresh_tokens", userID.String())
+
+	pipe := a.redis.Pipeline()
+	pipe.Set(ctx, refreshKey, userID.String(), 7*24*time.Hour)
+	pipe.SAdd(ctx, userTokensKey, token)
+	pipe.Expire(ctx, userTokensKey, 7*24*time.Hour)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+func (a *authService) deleteRefreshToken(ctx context.Context, userID uuid.UUID, token string) {
+	if a.redis == nil {
+		return
+	}
+	refreshKey := fmt.Sprintf("refresh:%s", token)
+	userTokensKey := fmt.Sprintf("user:%s:refresh_tokens", userID.String())
+
+	pipe := a.redis.Pipeline()
+	pipe.Del(ctx, refreshKey)
+	pipe.SRem(ctx, userTokensKey, token)
+	_, _ = pipe.Exec(ctx)
+}
+
+func (a *authService) revokeAllUserRefreshTokens(ctx context.Context, userID uuid.UUID) error {
+	if a.redis == nil {
+		return nil
+	}
+	userTokensKey := fmt.Sprintf("user:%s:refresh_tokens", userID.String())
+	tokens, err := a.redis.SMembers(ctx, userTokensKey).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return err
+	}
+
+	pipe := a.redis.Pipeline()
+	for _, t := range tokens {
+		pipe.Del(ctx, fmt.Sprintf("refresh:%s", t))
+	}
+	pipe.Del(ctx, userTokensKey)
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 func (a *authService) Register(ctx context.Context, request CreateUserRequest) (UserResponse, error) {
@@ -307,9 +363,8 @@ func (a *authService) Login(ctx context.Context, request LoginUserRequest) (Auth
 		return AuthResponse{}, fmt.Errorf("failed to generate refresh token: %w", err)
 	}
 
-	// Simpan refresh token ke redis dengan TTL 7 hari
-	refreshKey := fmt.Sprintf("refresh:%s", refreshToken)
-	if err := a.redis.Set(ctx, refreshKey, user.ID.String(), 7*24*time.Hour).Err(); err != nil {
+	// Simpan refresh token ke Redis dengan TTL 7 hari
+	if err := a.storeRefreshToken(ctx, user.ID, refreshToken); err != nil {
 		return AuthResponse{}, fmt.Errorf("failed to save refresh token to redis: %w", err)
 	}
 
@@ -371,7 +426,7 @@ func (a *authService) RefreshToken(ctx context.Context, refreshToken string) (Au
 	}
 
 	// 2. Refresh Token Rotation (RTR): Hapus token lama segera agar tidak bisa di-reuse
-	_ = a.redis.Del(ctx, key).Err()
+	a.deleteRefreshToken(ctx, userID, refreshToken)
 
 	// 3. Ambil data user dari database
 	user, err := a.querier.GetUserByID(ctx, userID)
@@ -400,8 +455,7 @@ func (a *authService) RefreshToken(ctx context.Context, refreshToken string) (Au
 	}
 
 	// 7. Simpan refresh token baru ke Redis dengan TTL 7 hari
-	newKey := fmt.Sprintf("refresh:%s", newRefreshToken)
-	if err := a.redis.Set(ctx, newKey, user.ID.String(), 7*24*time.Hour).Err(); err != nil {
+	if err := a.storeRefreshToken(ctx, user.ID, newRefreshToken); err != nil {
 		return AuthResponse{}, fmt.Errorf("failed to save refresh token to redis: %w", err)
 	}
 
@@ -432,7 +486,16 @@ func (a *authService) Logout(ctx context.Context, refreshToken string) error {
 	refreshToken = strings.TrimSpace(refreshToken)
 	if refreshToken != "" {
 		key := fmt.Sprintf("refresh:%s", refreshToken)
-		_ = a.redis.Del(ctx, key).Err()
+		userIDStr, err := a.redis.Get(ctx, key).Result()
+		if err == nil {
+			if uID, err := uuid.Parse(userIDStr); err == nil {
+				a.deleteRefreshToken(ctx, uID, refreshToken)
+			} else {
+				_ = a.redis.Del(ctx, key).Err()
+			}
+		} else {
+			_ = a.redis.Del(ctx, key).Err()
+		}
 	}
 
 	if a.auditLogger != nil {
@@ -554,31 +617,35 @@ func (a *authService) ResetPassword(ctx context.Context, request ResetPasswordRe
 		return fmt.Errorf("failed to hash new password: %w", err)
 	}
 
-	// 5. Update password di database PostgreSQL
-	err = a.querier.UpdateUserPassword(ctx, db.UpdateUserPasswordParams{
-		ID:           user.ID,
-		PasswordHash: hashedPassword,
+	// 5. Update password & increment token version inside a database transaction (ACID)!
+	var newVersion int32
+	err = a.runInTx(ctx, func(q db.Querier) error {
+		if err := q.UpdateUserPassword(ctx, db.UpdateUserPasswordParams{
+			ID:           user.ID,
+			PasswordHash: hashedPassword,
+		}); err != nil {
+			return fmt.Errorf("failed to update user password: %w", err)
+		}
+
+		nv, err := q.IncrementUserTokenVersion(ctx, user.ID)
+		if err != nil {
+			return fmt.Errorf("failed to increment token version: %w", err)
+		}
+		newVersion = nv
+		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("failed to update user password: %w", err)
+		return fmt.Errorf("failed to reset password in transaction: %w", err)
 	}
 
-	// 6. Cabut seluruh sesi aktif lama: bump token_version di PostgreSQL & Redis agar Access Token lama batal seketika!
-	newVersion, err := a.querier.IncrementUserTokenVersion(ctx, user.ID)
-	if err == nil {
+	// 6. Cabut seluruh sesi aktif lama: simpan token_version baru ke Redis agar Access Token lama batal seketika!
+	if a.redis != nil {
 		versionKey := fmt.Sprintf("user:%s:token_version", user.ID.String())
 		_ = a.redis.Set(ctx, versionKey, strconv.Itoa(int(newVersion)), 30*24*time.Hour).Err()
 	}
 
-	// Hapus seluruh refresh token user di Redis
-	iter := a.redis.Scan(ctx, 0, "refresh:*", 0).Iterator()
-	for iter.Next(ctx) {
-		k := iter.Val()
-		val, err := a.redis.Get(ctx, k).Result()
-		if err == nil && val == user.ID.String() {
-			_ = a.redis.Del(ctx, k).Err()
-		}
-	}
+	// 7. Revoke seluruh refresh token user di Redis menggunakan index set O(1) batch (bukan Redis SCAN)
+	_ = a.revokeAllUserRefreshTokens(ctx, user.ID)
 
 	if a.auditLogger != nil {
 		a.auditLogger.Log(ctx, shared.AuditEntry{
@@ -1012,8 +1079,7 @@ func (a *authService) VerifyMFA(ctx context.Context, request MFAVerifyRequest) (
 	}
 
 	// Simpan refresh token ke Redis dengan TTL 7 hari
-	refreshKey := fmt.Sprintf("refresh:%s", refreshToken)
-	if err := a.redis.Set(ctx, refreshKey, user.ID.String(), 7*24*time.Hour).Err(); err != nil {
+	if err := a.storeRefreshToken(ctx, user.ID, refreshToken); err != nil {
 		return AuthResponse{}, fmt.Errorf("failed to save refresh token to redis: %w", err)
 	}
 
