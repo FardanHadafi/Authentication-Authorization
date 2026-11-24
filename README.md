@@ -272,13 +272,13 @@ The server will start listening on port `:8080`.
 
 The repository ships with an enterprise-ready observability stack pre-configured in `compose.yaml`:
 
-| Service | Port | Description & Access |
-| :--- | :--- | :--- |
-| **Grafana Dashboard** | [`http://localhost:3000`](http://localhost:3000) | Pre-configured unified dashboard for Metrics, Logs, and Traces (admin/admin). |
-| **Mailpit Web UI** | [`http://localhost:8025`](http://localhost:8025) | Local SMTP mailbox inspector to preview verification and reset emails. |
-| **Prometheus TSDB** | [`http://localhost:9090`](http://localhost:9090) | Time-series database scraping API metrics at `/metrics`. |
-| **Grafana Tempo** | `http://localhost:3200` | High-volume distributed tracing backend receiving traces on `:4317` (gRPC). |
-| **Grafana Loki** | `http://localhost:3100` | Log aggregation engine receiving structured JSON logs from Promtail. |
+| Service | Port | Type & Access | Description |
+| :--- | :--- | :--- | :--- |
+| **Grafana Dashboard** | [`http://localhost:3000`](http://localhost:3000) | **Interactive Web UI** | Unified visual dashboard for Metrics, Logs, and Traces (login: `admin`/`admin`). |
+| **Mailpit Web UI** | [`http://localhost:8025`](http://localhost:8025) | **Interactive Web UI** | Local SMTP mailbox inspector to view verification & password reset emails. |
+| **Prometheus TSDB** | [`http://localhost:9090`](http://localhost:9090) | **Web UI & Scraper** | Time-series database scraping `/metrics` directly. |
+| **Grafana Tempo** | `:3200` (API) / `:4317` (OTLP) | **Headless Storage Engine** | Distributed tracing backend. *(No HTML UI at root `/`; traces are visualized in Grafana).* |
+| **Grafana Loki** | `:3100` (API) | **Headless Log Engine** | High-performance log aggregation engine. *(No HTML UI at root `/`; logs are queried in Grafana).* |
 
 ---
 
