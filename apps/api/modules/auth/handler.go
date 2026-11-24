@@ -23,6 +23,8 @@ type AuthHandler interface {
 	ForgotPassword(w http.ResponseWriter, r *http.Request)
 	ResetPassword(w http.ResponseWriter, r *http.Request)
 	ResendVerificationEmail(w http.ResponseWriter, r *http.Request)
+	GetProfile(w http.ResponseWriter, r *http.Request)
+	ListUsers(w http.ResponseWriter, r *http.Request)
 }
 
 type authHandler struct {
@@ -298,4 +300,44 @@ func (h *authHandler) ResendVerificationEmail(w http.ResponseWriter, r *http.Req
 	_ = shared.WriteJSON(w, http.StatusOK, ResendVerificationEmailResponse{
 		Message: "Jika email terdaftar dan belum diverifikasi, tautan verifikasi baru telah dikirimkan ke kotak masuk Anda.",
 	})
+}
+
+func (h *authHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
+	// Ambil claims yang sudah di inject oleh RequireAuth middleware
+	claims := shared.GetUserClaims(r.Context())
+	if claims == nil {
+		shared.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	// Panggil service dengan claims.UserID
+	user, err := h.authService.GetProfile(r.Context(), claims.UserID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			shared.WriteError(w, http.StatusNotFound, "user not found")
+			return
+		}
+
+		if errors.Is(err, ErrAccountInactive) {
+			shared.WriteError(w, http.StatusForbidden, "account is inactive or suspended")
+			return
+		}
+
+		h.logger.Error("failed to get user profile", "error", err)
+		shared.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	_ = shared.WriteJSON(w, http.StatusOK, user)
+}
+
+func (h *authHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := h.authService.ListUsers(r.Context())
+	if err != nil {
+		h.logger.Error("failed to list users", "error", err)
+		shared.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	_ = shared.WriteJSON(w, http.StatusOK, users)
 }
