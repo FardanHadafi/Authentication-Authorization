@@ -17,8 +17,29 @@ servers:
 tags:
   - name: Authentication
     description: User registration, email verification, and session management
+  - name: Administration
+    description: Privileged administrative operations
+  - name: Observability
+    description: Prometheus metrics and system telemetry
 
 paths:
+  /metrics:
+    get:
+      tags:
+        - Observability
+      summary: Prometheus metrics endpoint
+      description: |
+        Exposes system, runtime Go, and HTTP metrics (requests total, request duration latency histogram, active requests, response size)
+        in standard Prometheus text format for scraping.
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Prometheus text exposition format
+          content:
+            text/plain; version=0.0.4:
+              schema:
+                type: string
+
   /api/auth/register:
     post:
       tags:

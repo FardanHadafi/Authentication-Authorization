@@ -95,6 +95,10 @@ type responseWriter struct {
 }
 
 func newResponseWriter(w http.ResponseWriter) *responseWriter {
+	if rw, ok := w.(*responseWriter); ok {
+		return rw
+	}
+
 	// Default status code di Go adalah 200 OK jika handler tidak memanggil WriteHeader secara eksplisit
 	return &responseWriter{
 		ResponseWriter: w,

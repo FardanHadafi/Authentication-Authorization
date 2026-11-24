@@ -16,6 +16,7 @@ import (
 	"github.com/go-redis/redis_rate/v10"
 	"github.com/hibiken/asynq"
 	"github.com/joho/godotenv"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -110,6 +111,9 @@ func main() {
 	// Auth Routes
 	auth.RegisterRoutes(mux, authHandler, tokenManager, limiter)
 
+	// Prometheus Metrics Endpoint
+	mux.Handle("GET /metrics", promhttp.Handler())
+
 	port := os.Getenv("API_PORT")
 	if port == "" {
 		port = "8080"
@@ -118,6 +122,7 @@ func main() {
 	router := shared.Chain(
 		mux,
 		shared.RequestIDMiddleware,
+		shared.MetricsMiddleware,
 		shared.RecoveryMiddleware(logger),
 		shared.LoggingMiddleware(logger),
 	)
