@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -111,13 +112,14 @@ func (a *authService) Register(ctx context.Context, request CreateUserRequest) (
 
 	// 6. Return response yang sudah dipetakan dengan DTO
 	return UserResponse{
-		ID:        newUser.ID.String(),
-		FullName:  newUser.FullName,
-		Email:     newUser.Email,
-		Role:      newUser.Role,
-		Status:    newUser.Status,
-		CreatedAt: newUser.CreatedAt,
-		UpdatedAt: newUser.UpdatedAt,
+		ID:           newUser.ID.String(),
+		FullName:     newUser.FullName,
+		Email:        newUser.Email,
+		Role:         newUser.Role,
+		Status:       newUser.Status,
+		TokenVersion: int(newUser.TokenVersion),
+		CreatedAt:    newUser.CreatedAt,
+		UpdatedAt:    newUser.UpdatedAt,
 	}, nil
 }
 
@@ -190,7 +192,7 @@ func (a *authService) Login(ctx context.Context, request LoginUserRequest) (Auth
 	}
 
 	// Terbitkan AccessToken
-	accessToken, expiresAt, err := a.tokenManager.GenerateAccessToken(user.ID, user.Email, user.Role)
+	accessToken, expiresAt, err := a.tokenManager.GenerateAccessToken(user.ID, user.Email, user.Role, int(user.TokenVersion))
 	if err != nil {
 		return AuthResponse{}, fmt.Errorf("failed to generate access token: %w", err)
 	}
@@ -214,13 +216,14 @@ func (a *authService) Login(ctx context.Context, request LoginUserRequest) (Auth
 		RefreshToken: refreshToken,
 		ExpiresAt:    expiresAt,
 		User: UserResponse{
-			ID:        user.ID.String(),
-			FullName:  user.FullName,
-			Email:     user.Email,
-			Role:      user.Role,
-			Status:    user.Status,
-			CreatedAt: user.CreatedAt,
-			UpdatedAt: user.UpdatedAt,
+			ID:           user.ID.String(),
+			FullName:     user.FullName,
+			Email:        user.Email,
+			Role:         user.Role,
+			Status:       user.Status,
+			TokenVersion: int(user.TokenVersion),
+			CreatedAt:    user.CreatedAt,
+			UpdatedAt:    user.UpdatedAt,
 		},
 	}, nil
 }
@@ -268,7 +271,7 @@ func (a *authService) RefreshToken(ctx context.Context, refreshToken string) (Au
 	}
 
 	// 5. Generate Access Token baru
-	accessToken, expiresAt, err := a.tokenManager.GenerateAccessToken(user.ID, user.Email, user.Role)
+	accessToken, expiresAt, err := a.tokenManager.GenerateAccessToken(user.ID, user.Email, user.Role, int(user.TokenVersion))
 	if err != nil {
 		return AuthResponse{}, fmt.Errorf("failed to generate access token: %w", err)
 	}
@@ -291,13 +294,14 @@ func (a *authService) RefreshToken(ctx context.Context, refreshToken string) (Au
 		RefreshToken: newRefreshToken,
 		ExpiresAt:    expiresAt,
 		User: UserResponse{
-			ID:        user.ID.String(),
-			FullName:  user.FullName,
-			Email:     user.Email,
-			Role:      user.Role,
-			Status:    user.Status,
-			CreatedAt: user.CreatedAt,
-			UpdatedAt: user.UpdatedAt,
+			ID:           user.ID.String(),
+			FullName:     user.FullName,
+			Email:        user.Email,
+			Role:         user.Role,
+			Status:       user.Status,
+			TokenVersion: int(user.TokenVersion),
+			CreatedAt:    user.CreatedAt,
+			UpdatedAt:    user.UpdatedAt,
 		},
 	}, nil
 }
@@ -421,7 +425,14 @@ func (a *authService) ResetPassword(ctx context.Context, request ResetPasswordRe
 		return fmt.Errorf("failed to update user password: %w", err)
 	}
 
-	// 6. Cabut seluruh sesi aktif lama (revoke refresh tokens) di Redis
+	// 6. Cabut seluruh sesi aktif lama: bump token_version di PostgreSQL & Redis agar Access Token lama batal seketika!
+	newVersion, err := a.querier.IncrementUserTokenVersion(ctx, user.ID)
+	if err == nil {
+		versionKey := fmt.Sprintf("user:%s:token_version", user.ID.String())
+		_ = a.redis.Set(ctx, versionKey, strconv.Itoa(int(newVersion)), 30*24*time.Hour).Err()
+	}
+
+	// Hapus seluruh refresh token user di Redis
 	iter := a.redis.Scan(ctx, 0, "refresh:*", 0).Iterator()
 	for iter.Next(ctx) {
 		k := iter.Val()
@@ -505,13 +516,14 @@ func (a *authService) GetProfile(ctx context.Context, userID uuid.UUID) (UserRes
 	}
 
 	return UserResponse{
-		ID:        user.ID.String(),
-		FullName:  user.FullName,
-		Email:     user.Email,
-		Role:      user.Role,
-		Status:    user.Status,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
+		ID:           user.ID.String(),
+		FullName:     user.FullName,
+		Email:        user.Email,
+		Role:         user.Role,
+		Status:       user.Status,
+		TokenVersion: int(user.TokenVersion),
+		CreatedAt:    user.CreatedAt,
+		UpdatedAt:    user.UpdatedAt,
 	}, nil
 }
 
@@ -524,13 +536,14 @@ func (a *authService) ListUsers(ctx context.Context) ([]UserResponse, error) {
 	response := make([]UserResponse, len(users))
 	for i, u := range users {
 		response[i] = UserResponse{
-			ID:        u.ID.String(),
-			FullName:  u.FullName,
-			Email:     u.Email,
-			Role:      u.Role,
-			Status:    u.Status,
-			CreatedAt: u.CreatedAt,
-			UpdatedAt: u.UpdatedAt,
+			ID:           u.ID.String(),
+			FullName:     u.FullName,
+			Email:        u.Email,
+			Role:         u.Role,
+			Status:       u.Status,
+			TokenVersion: int(u.TokenVersion),
+			CreatedAt:    u.CreatedAt,
+			UpdatedAt:    u.UpdatedAt,
 		}
 	}
 

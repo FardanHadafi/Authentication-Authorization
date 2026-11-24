@@ -19,4 +19,5 @@ type User struct {
 	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	TokenVersion int32     `json:"token_version"`
 }

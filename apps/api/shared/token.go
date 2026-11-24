@@ -17,14 +17,15 @@ var (
 )
 
 type JWTClaims struct {
-	UserID uuid.UUID `json:"user_id"`
-	Email  string    `json:"email"`
-	Role   string    `json:"role"`
+	UserID       uuid.UUID `json:"user_id"`
+	Email        string    `json:"email"`
+	Role         string    `json:"role"`
+	TokenVersion int       `json:"token_version"`
 	jwt.RegisteredClaims
 }
 
 type TokenManager interface {
-	GenerateAccessToken(userID uuid.UUID, email, role string) (string, time.Time, error)
+	GenerateAccessToken(userID uuid.UUID, email, role string, tokenVersion int) (string, time.Time, error)
 	GenerateRefreshToken() (string, error)
 	ValidateAccessToken(tokenString string) (*JWTClaims, error)
 }
@@ -43,16 +44,17 @@ func NewTokenManager(secretKey []byte, accessExpiry time.Duration, issuer string
 	}
 }
 
-func (t *JWTManager) GenerateAccessToken(userID uuid.UUID, email, role string) (string, time.Time, error) {
+func (t *JWTManager) GenerateAccessToken(userID uuid.UUID, email, role string, tokenVersion int) (string, time.Time, error) {
 	// 1. Hitung timestampt saat ini dan batas waktu kadaluarsa token
 	now := time.Now()
 	expiresAt := now.Add(t.accessExpiry)
 
 	// 2. Susun payload claim custom user beserta claim standard jwt
 	claims := JWTClaims{
-		UserID: userID,
-		Email:  email,
-		Role:   role,
+		UserID:       userID,
+		Email:        email,
+		Role:         role,
+		TokenVersion: tokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    t.issuer,
 			Subject:   userID.String(),

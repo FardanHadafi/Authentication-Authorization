@@ -207,8 +207,13 @@ func Chain(h http.Handler, middlewares ...Middleware) http.Handler {
 	return h
 }
 
-// RequireAuth memvalidasi JWT Access Token dari header Authorization: Bearer <token>
-func RequireAuth(tokenManager TokenManager) Middleware {
+// RequireAuth memvalidasi JWT Access Token dari header Authorization: Bearer <token> serta memeriksa revocation status
+func RequireAuth(tokenManager TokenManager, revocationCheckers ...TokenRevocationChecker) Middleware {
+	var revocationChecker TokenRevocationChecker
+	if len(revocationCheckers) > 0 {
+		revocationChecker = revocationCheckers[0]
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
@@ -228,6 +233,15 @@ func RequireAuth(tokenManager TokenManager) Middleware {
 			if err != nil {
 				WriteError(w, http.StatusUnauthorized, "invalid or expired access token")
 				return
+			}
+
+			// Cek apakah token telah dicabut (Revocation Check via Redis / Token Version)
+			if revocationChecker != nil {
+				revoked, err := revocationChecker.IsTokenRevoked(r.Context(), claims.UserID, claims.TokenVersion, claims.ID)
+				if err == nil && revoked {
+					WriteError(w, http.StatusUnauthorized, "access token has been revoked")
+					return
+				}
 			}
 
 			ctx := context.WithValue(r.Context(), UserClaimsKey, claims)

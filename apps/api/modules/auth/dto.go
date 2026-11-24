@@ -44,13 +44,14 @@ type ResendVerificationEmailResponse struct {
 }
 
 type UserResponse struct {
-	ID        string    `json:"id"`
-	FullName  string    `json:"full_name"`
-	Email     string    `json:"email"`
-	Role      string    `json:"role"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	FullName     string    `json:"full_name"`
+	Email        string    `json:"email"`
+	Role         string    `json:"role"`
+	Status       string    `json:"status"`
+	TokenVersion int       `json:"token_version"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type AuthResponse struct {

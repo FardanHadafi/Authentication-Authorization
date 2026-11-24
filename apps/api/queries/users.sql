@@ -5,10 +5,10 @@ INSERT INTO users (
     password_hash
 ) VALUES (
     $1, $2, $3
-) RETURNING id, full_name, email, password_hash, role, status, created_at, updated_at;
+) RETURNING id, full_name, email, password_hash, role, status, token_version, created_at, updated_at;
 
 -- name: GetUserByEmail :one
-SELECT id, full_name, email, password_hash, role, status, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1;
+SELECT id, full_name, email, password_hash, role, status, token_version, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1;
 
 -- name: UpdateUserStatus :exec
 UPDATE users
@@ -17,7 +17,7 @@ SET status = $2,
 WHERE id = $1;
 
 -- name: GetUserByID :one
-SELECT id, full_name, email, password_hash, role, status, created_at, updated_at
+SELECT id, full_name, email, password_hash, role, status, token_version, created_at, updated_at
 FROM users
 WHERE id = $1 LIMIT 1;
 
@@ -27,7 +27,17 @@ SET password_hash = $2,
     updated_at = NOW()
 WHERE id = $1;
 
+-- name: IncrementUserTokenVersion :one
+UPDATE users
+SET token_version = token_version + 1,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING token_version;
+
+-- name: GetUserTokenVersion :one
+SELECT token_version FROM users WHERE id = $1 LIMIT 1;
+
 -- name: ListUsers :many
-SELECT id, full_name, email, role, status, created_at, updated_at
+SELECT id, full_name, email, role, status, token_version, created_at, updated_at
 FROM users
 ORDER BY created_at DESC LIMIT 10;

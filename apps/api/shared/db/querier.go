@@ -11,9 +11,11 @@ import (
 )
 
 type Querier interface {
-	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
-	GetUserByEmail(ctx context.Context, lower string) (User, error)
-	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
+	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
+	GetUserByEmail(ctx context.Context, lower string) (GetUserByEmailRow, error)
+	GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error)
+	GetUserTokenVersion(ctx context.Context, id uuid.UUID) (int32, error)
+	IncrementUserTokenVersion(ctx context.Context, id uuid.UUID) (int32, error)
 	ListUsers(ctx context.Context) ([]ListUsersRow, error)
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpdateUserStatus(ctx context.Context, arg UpdateUserStatusParams) error

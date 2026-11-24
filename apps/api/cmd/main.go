@@ -108,8 +108,11 @@ func main() {
 	// Redis Rate Limiter
 	limiter := redis_rate.NewLimiter(redisClient)
 
+	// Token Revocation Checker
+	revocationChecker := shared.NewRevocationChecker(redisClient)
+
 	// Auth Routes
-	auth.RegisterRoutes(mux, authHandler, tokenManager, limiter)
+	auth.RegisterRoutes(mux, authHandler, tokenManager, limiter, revocationChecker)
 
 	// Prometheus Metrics Endpoint
 	mux.Handle("GET /metrics", promhttp.Handler())

@@ -19,8 +19,27 @@ type mockTokenManager struct {
 	validateFn func(tokenString string) (*JWTClaims, error)
 }
 
-func (m *mockTokenManager) GenerateAccessToken(userID uuid.UUID, email, role string) (string, time.Time, error) {
+func (m *mockTokenManager) GenerateAccessToken(userID uuid.UUID, email, role string, tokenVersion int) (string, time.Time, error) {
 	return "mock-access-token", time.Now().Add(15 * time.Minute), nil
+}
+
+type mockRevocationChecker struct {
+	isRevokedFn func(ctx context.Context, userID uuid.UUID, tokenVersion int, jti string) (bool, error)
+}
+
+func (m *mockRevocationChecker) IsTokenRevoked(ctx context.Context, userID uuid.UUID, tokenVersion int, jti string) (bool, error) {
+	if m.isRevokedFn != nil {
+		return m.isRevokedFn(ctx, userID, tokenVersion, jti)
+	}
+	return false, nil
+}
+
+func (m *mockRevocationChecker) RevokeAllUserTokens(ctx context.Context, userID uuid.UUID, newVersion int) error {
+	return nil
+}
+
+func (m *mockRevocationChecker) BlacklistJTI(ctx context.Context, jti string, ttl time.Duration) error {
+	return nil
 }
 
 func (m *mockTokenManager) GenerateRefreshToken() (string, error) {
@@ -255,6 +274,28 @@ func TestRequireAuth(t *testing.T) {
 		}
 		if capturedClaims.Email != "user@example.com" || capturedClaims.Role != "admin" {
 			t.Fatalf("unexpected claims: %+v", capturedClaims)
+		}
+	})
+
+	t.Run("revoked token returns 401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req.Header.Set("Authorization", "Bearer valid-token")
+		rec := httptest.NewRecorder()
+
+		mockRevocation := &mockRevocationChecker{
+			isRevokedFn: func(ctx context.Context, uID uuid.UUID, v int, jti string) (bool, error) {
+				return true, nil
+			},
+		}
+
+		handler := RequireAuth(mockTM, mockRevocation)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected status 401 for revoked token, got %d", rec.Code)
 		}
 	})
 }

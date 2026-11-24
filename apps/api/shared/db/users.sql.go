@@ -19,7 +19,7 @@ INSERT INTO users (
     password_hash
 ) VALUES (
     $1, $2, $3
-) RETURNING id, full_name, email, password_hash, role, status, created_at, updated_at
+) RETURNING id, full_name, email, password_hash, role, status, token_version, created_at, updated_at
 `
 
 type CreateUserParams struct {
@@ -28,9 +28,21 @@ type CreateUserParams struct {
 	PasswordHash string `json:"password_hash"`
 }
 
-func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
+type CreateUserRow struct {
+	ID           uuid.UUID `json:"id"`
+	FullName     string    `json:"full_name"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"password_hash"`
+	Role         string    `json:"role"`
+	Status       string    `json:"status"`
+	TokenVersion int32     `json:"token_version"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
 	row := q.db.QueryRow(ctx, createUser, arg.FullName, arg.Email, arg.PasswordHash)
-	var i User
+	var i CreateUserRow
 	err := row.Scan(
 		&i.ID,
 		&i.FullName,
@@ -38,6 +50,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.PasswordHash,
 		&i.Role,
 		&i.Status,
+		&i.TokenVersion,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -45,12 +58,24 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, full_name, email, password_hash, role, status, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1
+SELECT id, full_name, email, password_hash, role, status, token_version, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1
 `
 
-func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error) {
+type GetUserByEmailRow struct {
+	ID           uuid.UUID `json:"id"`
+	FullName     string    `json:"full_name"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"password_hash"`
+	Role         string    `json:"role"`
+	Status       string    `json:"status"`
+	TokenVersion int32     `json:"token_version"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (GetUserByEmailRow, error) {
 	row := q.db.QueryRow(ctx, getUserByEmail, lower)
-	var i User
+	var i GetUserByEmailRow
 	err := row.Scan(
 		&i.ID,
 		&i.FullName,
@@ -58,6 +83,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.PasswordHash,
 		&i.Role,
 		&i.Status,
+		&i.TokenVersion,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -65,14 +91,26 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, full_name, email, password_hash, role, status, created_at, updated_at
+SELECT id, full_name, email, password_hash, role, status, token_version, created_at, updated_at
 FROM users
 WHERE id = $1 LIMIT 1
 `
 
-func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
+type GetUserByIDRow struct {
+	ID           uuid.UUID `json:"id"`
+	FullName     string    `json:"full_name"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"password_hash"`
+	Role         string    `json:"role"`
+	Status       string    `json:"status"`
+	TokenVersion int32     `json:"token_version"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error) {
 	row := q.db.QueryRow(ctx, getUserByID, id)
-	var i User
+	var i GetUserByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.FullName,
@@ -80,26 +118,54 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.PasswordHash,
 		&i.Role,
 		&i.Status,
+		&i.TokenVersion,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
+const getUserTokenVersion = `-- name: GetUserTokenVersion :one
+SELECT token_version FROM users WHERE id = $1 LIMIT 1
+`
+
+func (q *Queries) GetUserTokenVersion(ctx context.Context, id uuid.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, getUserTokenVersion, id)
+	var token_version int32
+	err := row.Scan(&token_version)
+	return token_version, err
+}
+
+const incrementUserTokenVersion = `-- name: IncrementUserTokenVersion :one
+UPDATE users
+SET token_version = token_version + 1,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING token_version
+`
+
+func (q *Queries) IncrementUserTokenVersion(ctx context.Context, id uuid.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, incrementUserTokenVersion, id)
+	var token_version int32
+	err := row.Scan(&token_version)
+	return token_version, err
+}
+
 const listUsers = `-- name: ListUsers :many
-SELECT id, full_name, email, role, status, created_at, updated_at
+SELECT id, full_name, email, role, status, token_version, created_at, updated_at
 FROM users
 ORDER BY created_at DESC LIMIT 10
 `
 
 type ListUsersRow struct {
-	ID        uuid.UUID `json:"id"`
-	FullName  string    `json:"full_name"`
-	Email     string    `json:"email"`
-	Role      string    `json:"role"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID           uuid.UUID `json:"id"`
+	FullName     string    `json:"full_name"`
+	Email        string    `json:"email"`
+	Role         string    `json:"role"`
+	Status       string    `json:"status"`
+	TokenVersion int32     `json:"token_version"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
@@ -117,6 +183,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 			&i.Email,
 			&i.Role,
 			&i.Status,
+			&i.TokenVersion,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {

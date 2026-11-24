@@ -742,6 +742,10 @@ components:
           enum: [pending, active, suspended]
           default: pending
           example: "pending"
+        token_version:
+          type: integer
+          description: Incrementing security token version for instant session revocation
+          example: 1
         created_at:
           type: string
           format: date-time

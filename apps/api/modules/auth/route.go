@@ -8,7 +8,7 @@ import (
 	"github.com/go-redis/redis_rate/v10"
 )
 
-func RegisterRoutes(mux *http.ServeMux, handler AuthHandler, tokenManager shared.TokenManager, limiter *redis_rate.Limiter) {
+func RegisterRoutes(mux *http.ServeMux, handler AuthHandler, tokenManager shared.TokenManager, limiter *redis_rate.Limiter, revocationChecker shared.TokenRevocationChecker) {
 	mux.Handle("POST /api/auth/register", shared.Chain(
 		http.HandlerFunc(handler.Register),
 		shared.RateLimitMiddleware(limiter, shared.IPKey("register"), 10, time.Hour),
@@ -45,14 +45,14 @@ func RegisterRoutes(mux *http.ServeMux, handler AuthHandler, tokenManager shared
 	// Protected Routes
 	mux.Handle("GET /api/auth/me", shared.Chain(
 		http.HandlerFunc(handler.GetProfile),
-		shared.RequireAuth(tokenManager),
+		shared.RequireAuth(tokenManager, revocationChecker),
 		shared.RateLimitMiddleware(limiter, shared.UserKey("me"), 60, time.Minute),
 	))
 
 	// Admin Routes
 	mux.Handle("GET /api/admin/users", shared.Chain(
 		http.HandlerFunc(handler.ListUsers),
-		shared.RequireAuth(tokenManager),
+		shared.RequireAuth(tokenManager, revocationChecker),
 		shared.RequireRole("admin"),
 		shared.RateLimitMiddleware(limiter, shared.UserKey("admin-users"), 30, time.Minute),
 	))
