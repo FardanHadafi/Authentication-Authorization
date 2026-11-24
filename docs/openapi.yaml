@@ -6,7 +6,7 @@ info:
     Production-grade Authentication and Authorization REST API service built with:
     - **Go 1.27** (net/http ServeMux routing, encoding/json/v2, gobreaker circuit breaker)
     - **PostgreSQL 18** (Native UUIDv7, SQLC, pgx/v5)
-    - **Redis 8** (Verification tokens, refresh token rotation, task queue)
+    - **Redis 8** (Verification tokens, refresh token rotation, task queue, GCRA rate limiting)
     - **Asynq & Mailpit** (Asynchronous email queue & SMTP delivery)
   contact:
     name: API Support
@@ -65,6 +65,8 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error: "internal server error"
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
 
   /api/auth/verify:
     get:
@@ -117,6 +119,8 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error: "internal server error"
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
 
   /api/auth/login:
     post:
@@ -178,6 +182,8 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error: "internal server error"
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
 
   /api/auth/refresh:
     post:
@@ -231,6 +237,8 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error: "internal server error"
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
 
   /api/auth/logout:
     post:
@@ -271,6 +279,8 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error: "internal server error"
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
 
   /api/auth/forgot-password:
     post:
@@ -314,6 +324,8 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error: "internal server error"
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
 
   /api/auth/reset-password:
     post:
@@ -358,6 +370,8 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error: "internal server error"
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
 
   /api/auth/resend-verification:
     post:
@@ -397,6 +411,8 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error: "internal server error"
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
 
   /api/auth/me:
     get:
@@ -447,6 +463,8 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error: "internal server error"
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
 
   /api/admin/users:
     get:
@@ -492,6 +510,8 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error: "internal server error"
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
 
 components:
   securitySchemes:
@@ -499,6 +519,36 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  responses:
+    TooManyRequestsResponse:
+      description: Rate limit exceeded (RFC 6585)
+      headers:
+        X-RateLimit-Limit:
+          description: Request limit quota per time window
+          schema:
+            type: integer
+            example: 5
+        X-RateLimit-Remaining:
+          description: Remaining request count in the current window
+          schema:
+            type: integer
+            example: 0
+        X-RateLimit-Reset:
+          description: Unix epoch timestamp when the rate limit window resets
+          schema:
+            type: integer
+            example: 1732464000
+        Retry-After:
+          description: Number of seconds to wait before retrying
+          schema:
+            type: integer
+            example: 60
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "too many requests, please try again in 60 seconds"
   schemas:
     CreateUserRequest:
       type: object

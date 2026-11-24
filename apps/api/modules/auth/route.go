@@ -3,21 +3,57 @@ package auth
 import (
 	"authentication-authorization/shared"
 	"net/http"
+	"time"
+
+	"github.com/go-redis/redis_rate/v10"
 )
 
-func RegisterRoutes(mux *http.ServeMux, handler AuthHandler, tokenManager shared.TokenManager) {
-	mux.HandleFunc("POST /api/auth/register", handler.Register)
-	mux.HandleFunc("GET /api/auth/verify", handler.VerifyEmail)
-	mux.HandleFunc("POST /api/auth/login", handler.Login)
-	mux.HandleFunc("POST /api/auth/refresh", handler.RefreshToken)
-	mux.HandleFunc("POST /api/auth/logout", handler.Logout)
-	mux.HandleFunc("POST /api/auth/forgot-password", handler.ForgotPassword)
-	mux.HandleFunc("POST /api/auth/reset-password", handler.ResetPassword)
-	mux.HandleFunc("POST /api/auth/resend-verification", handler.ResendVerificationEmail)
+func RegisterRoutes(mux *http.ServeMux, handler AuthHandler, tokenManager shared.TokenManager, limiter *redis_rate.Limiter) {
+	mux.Handle("POST /api/auth/register", shared.Chain(
+		http.HandlerFunc(handler.Register),
+		shared.RateLimitMiddleware(limiter, shared.IPKey("register"), 10, time.Hour),
+	))
+	mux.Handle("GET /api/auth/verify", shared.Chain(
+		http.HandlerFunc(handler.VerifyEmail),
+		shared.RateLimitMiddleware(limiter, shared.IPKey("verify"), 20, time.Hour),
+	))
+	mux.Handle("POST /api/auth/login", shared.Chain(
+		http.HandlerFunc(handler.Login),
+		shared.RateLimitMiddleware(limiter, shared.IPKey("login"), 5, 15*time.Minute),
+	))
+	mux.Handle("POST /api/auth/refresh", shared.Chain(
+		http.HandlerFunc(handler.RefreshToken),
+		shared.RateLimitMiddleware(limiter, shared.IPKey("refresh"), 30, time.Minute),
+	))
+	mux.Handle("POST /api/auth/logout", shared.Chain(
+		http.HandlerFunc(handler.Logout),
+		shared.RateLimitMiddleware(limiter, shared.AutoKey("logout"), 30, time.Minute),
+	))
+	mux.Handle("POST /api/auth/forgot-password", shared.Chain(
+		http.HandlerFunc(handler.ForgotPassword),
+		shared.RateLimitMiddleware(limiter, shared.IPKey("forgot-pass"), 3, 15*time.Minute),
+	))
+	mux.Handle("POST /api/auth/reset-password", shared.Chain(
+		http.HandlerFunc(handler.ResetPassword),
+		shared.RateLimitMiddleware(limiter, shared.IPKey("reset-pass"), 5, 15*time.Minute),
+	))
+	mux.Handle("POST /api/auth/resend-verification", shared.Chain(
+		http.HandlerFunc(handler.ResendVerificationEmail),
+		shared.RateLimitMiddleware(limiter, shared.IPKey("resend-verify"), 3, 15*time.Minute),
+	))
 
 	// Protected Routes
-	mux.Handle("GET /api/auth/me", shared.Chain(http.HandlerFunc(handler.GetProfile), shared.RequireAuth(tokenManager)))
+	mux.Handle("GET /api/auth/me", shared.Chain(
+		http.HandlerFunc(handler.GetProfile),
+		shared.RequireAuth(tokenManager),
+		shared.RateLimitMiddleware(limiter, shared.UserKey("me"), 60, time.Minute),
+	))
 
 	// Admin Routes
-	mux.Handle("GET /api/admin/users", shared.Chain(http.HandlerFunc(handler.ListUsers), shared.RequireAuth(tokenManager), shared.RequireRole("admin")))
+	mux.Handle("GET /api/admin/users", shared.Chain(
+		http.HandlerFunc(handler.ListUsers),
+		shared.RequireAuth(tokenManager),
+		shared.RequireRole("admin"),
+		shared.RateLimitMiddleware(limiter, shared.UserKey("admin-users"), 30, time.Minute),
+	))
 }

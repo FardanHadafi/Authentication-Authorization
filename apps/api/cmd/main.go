@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/go-redis/redis_rate/v10"
 	"github.com/hibiken/asynq"
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
@@ -103,8 +104,11 @@ func main() {
 	// Auth Handler
 	authHandler := auth.NewAuthHandler(authService, logger, validate)
 
+	// Redis Rate Limiter
+	limiter := redis_rate.NewLimiter(redisClient)
+
 	// Auth Routes
-	auth.RegisterRoutes(mux, authHandler, tokenManager)
+	auth.RegisterRoutes(mux, authHandler, tokenManager, limiter)
 
 	port := os.Getenv("API_PORT")
 	if port == "" {
