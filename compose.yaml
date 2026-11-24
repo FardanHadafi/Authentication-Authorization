@@ -101,6 +101,18 @@ services:
       - tempo
       - loki
 
+  promtail:
+    image: docker.io/grafana/promtail:latest
+    container_name: auth-promtail
+    restart: unless-stopped
+    command: ["-config.file=/etc/promtail/promtail.yml"]
+    volumes:
+      - ./infra/observability/promtail/promtail.yml:/etc/promtail/promtail.yml:ro,Z
+      - ./apps/api/logs:/var/log/auth-api:ro,Z
+      - promtail_positions:/tmp:Z
+    depends_on:
+      - loki
+
 volumes:
   postgres_data:
   redis_data:
@@ -108,3 +120,4 @@ volumes:
   tempo_data:
   loki_data:
   grafana_data:
+  promtail_positions:
