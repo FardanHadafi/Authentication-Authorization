@@ -155,6 +155,10 @@ func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 			// Hitung durasi request
 			duration := time.Since(start)
 
+			// Ambil trace_id dan span_id dari OpenTelemetry jika tersedia
+			traceID, _ := r.Context().Value(TraceIDKey).(string)
+			spanID, _ := r.Context().Value(SpanIDKey).(string)
+
 			// Tentukan log level secara dinamis sesuai HTTP status
 			msg := "http request completed"
 			attrs := []any{
@@ -166,6 +170,13 @@ func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 				"bytes", wrapped.bytesWritten,
 				"client_ip", clientIP,
 				"user_agent", r.UserAgent(),
+			}
+
+			if traceID != "" {
+				attrs = append(attrs, "trace_id", traceID)
+			}
+			if spanID != "" {
+				attrs = append(attrs, "span_id", spanID)
 			}
 
 			switch {

@@ -114,6 +114,24 @@ func main() {
 	// Prometheus Metrics Endpoint
 	mux.Handle("GET /metrics", promhttp.Handler())
 
+	// OpenTelemetry Tracing ke Grafana Tempo
+	tempoEndpoint := os.Getenv("TEMPO_ENDPOINT")
+	if tempoEndpoint == "" {
+		tempoEndpoint = "localhost:4317"
+	}
+
+	_, shutdownTracer, err := shared.InitTracer(rootCtx, "auth-api", tempoEndpoint)
+	if err != nil {
+		logger.Warn("Failed to initialize OpenTelemetry tracer, continuing without tracing", "error", err)
+	} else {
+		defer func() {
+			if err := shutdownTracer(context.Background()); err != nil {
+				logger.Error("Failed to shutdown tracer gracefully", "error", err)
+			}
+		}()
+		logger.Info("OpenTelemetry tracer initialized successfully", "endpoint", tempoEndpoint)
+	}
+
 	port := os.Getenv("API_PORT")
 	if port == "" {
 		port = "8080"
@@ -122,6 +140,7 @@ func main() {
 	router := shared.Chain(
 		mux,
 		shared.RequestIDMiddleware,
+		shared.TracingMiddleware("auth-api"),
 		shared.MetricsMiddleware,
 		shared.RecoveryMiddleware(logger),
 		shared.LoggingMiddleware(logger),

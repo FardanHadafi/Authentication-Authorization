@@ -8,6 +8,7 @@ info:
     - **PostgreSQL 18** (Native UUIDv7, SQLC, pgx/v5)
     - **Redis 8 Server** (via `go-redis/v9` & `redis_rate/v10`: verification tokens, refresh token rotation, task queue, GCRA rate limiting)
     - **Asynq & Mailpit** (Asynchronous email queue & SMTP delivery)
+    - **Observability (LGTM & OpenTelemetry)** (Prometheus metrics, Tempo distributed tracing, Loki structured logging, Grafana dashboard)
   contact:
     name: API Support
 servers:
