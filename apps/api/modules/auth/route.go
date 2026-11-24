@@ -41,6 +41,10 @@ func RegisterRoutes(mux *http.ServeMux, handler AuthHandler, tokenManager shared
 		http.HandlerFunc(handler.ResendVerificationEmail),
 		shared.RateLimitMiddleware(limiter, shared.IPKey("resend-verify"), 3, 15*time.Minute),
 	))
+	mux.Handle("GET /api/auth/csrf", shared.Chain(
+		http.HandlerFunc(handler.GetCSRFToken),
+		shared.RateLimitMiddleware(limiter, shared.IPKey("csrf"), 60, time.Minute),
+	))
 
 	// Protected Routes
 	mux.Handle("GET /api/auth/me", shared.Chain(

@@ -83,3 +83,7 @@ type PaginatedAuditLogsResponse struct {
 	Page       int32              `json:"page"`
 	Limit      int32              `json:"limit"`
 }
+
+type CSRFTokenResponse struct {
+	CSRFToken string `json:"csrf_token"`
+}

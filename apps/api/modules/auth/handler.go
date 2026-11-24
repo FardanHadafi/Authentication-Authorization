@@ -27,6 +27,7 @@ type AuthHandler interface {
 	GetProfile(w http.ResponseWriter, r *http.Request)
 	ListUsers(w http.ResponseWriter, r *http.Request)
 	ListAuditLogs(w http.ResponseWriter, r *http.Request)
+	GetCSRFToken(w http.ResponseWriter, r *http.Request)
 }
 
 type authHandler struct {
@@ -367,4 +368,17 @@ func (h *authHandler) ListAuditLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = shared.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *authHandler) GetCSRFToken(w http.ResponseWriter, r *http.Request) {
+	token, err := shared.GenerateCSRFToken()
+	if err != nil {
+		h.logger.Error("failed to generate csrf token", "error", err)
+		shared.WriteError(w, http.StatusInternalServerError, "failed to generate csrf token")
+		return
+	}
+
+	isProd := os.Getenv("APP_ENV") == "production"
+	shared.SetCSRFCookie(w, token, isProd)
+	_ = shared.WriteJSON(w, http.StatusOK, CSRFTokenResponse{CSRFToken: token})
 }

@@ -41,6 +41,38 @@ paths:
               schema:
                 type: string
 
+  /api/auth/csrf:
+    get:
+      tags:
+        - Authentication
+      summary: Retrieve CSRF protection token
+      description: |
+        Generates a cryptographically random CSRF token (32-byte hex), sets the `_csrf` cookie
+        with `SameSite=Lax`, and returns the token in JSON payload. Clients should include this token
+        in the `X-CSRF-Token` header for state-changing requests.
+      operationId: getCSRFToken
+      responses:
+        '200':
+          description: CSRF token generated successfully
+          headers:
+            Set-Cookie:
+              description: Sets the `_csrf` cookie with 24-hour expiration
+              schema:
+                type: string
+                example: "_csrf=a1b2c3d4e5f6...; Path=/; Max-Age=86400; SameSite=Lax"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CSRFTokenResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "failed to generate csrf token"
+
   /api/auth/register:
     post:
       tags:
@@ -945,3 +977,13 @@ components:
           type: integer
           description: Max entries per page
           example: 20
+
+    CSRFTokenResponse:
+      type: object
+      required:
+        - csrf_token
+      properties:
+        csrf_token:
+          type: string
+          description: 64-character hexadecimal CSRF defense token
+          example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"

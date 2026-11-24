@@ -9,10 +9,26 @@ import (
 const (
 	AccessTokenCookieName  = "access_token"
 	RefreshTokenCookieName = "refresh_token"
+	CSRFCookieName         = "_csrf"
+	CSRFHeaderName         = "X-CSRF-Token"
 
 	AccessTokenMaxAge  = 15 * 60          // 15 menit (900 detik)
 	RefreshTokenMaxAge = 7 * 24 * 60 * 60 // 7 hari (604.800 detik)
+	CSRFCookieMaxAge   = 24 * 60 * 60     // 24 jam (86.400 detik)
 )
+
+func SetCSRFCookie(w http.ResponseWriter, token string, isProd bool) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     CSRFCookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   CSRFCookieMaxAge,
+		Expires:  time.Now().Add(24 * time.Hour),
+		HttpOnly: false, // Diperbolehkan dibaca JS front-end untuk ditempelkan ke header
+		Secure:   isProd,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
 
 func SetAuthCookie(w http.ResponseWriter, accessToken, refreshToken string, isProd bool) {
 	now := time.Now()

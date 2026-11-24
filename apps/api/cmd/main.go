@@ -143,6 +143,8 @@ func main() {
 		port = "8080"
 	}
 
+	csrfConfig := shared.DefaultCSRFConfig()
+
 	router := shared.Chain(
 		mux,
 		shared.RequestIDMiddleware,
@@ -150,6 +152,7 @@ func main() {
 		shared.MetricsMiddleware,
 		shared.RecoveryMiddleware(logger),
 		shared.LoggingMiddleware(logger),
+		shared.CSRFMiddleware(csrfConfig),
 	)
 
 	server := &http.Server{
