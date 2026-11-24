@@ -168,7 +168,8 @@ func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 			if clientIP == "" {
 				clientIP = r.RemoteAddr
 			} else {
-				clientIP = strings.Split(clientIP, ",")[0]
+				first, _, _ := strings.Cut(clientIP, ",")
+				clientIP = strings.TrimSpace(first)
 			}
 
 			// Bungkus response writer untuk menyadap status code & ukuran response
@@ -241,13 +242,13 @@ func RequireAuth(tokenManager TokenManager, revocationCheckers ...TokenRevocatio
 				return
 			}
 
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			scheme, tokenString, found := strings.Cut(authHeader, " ")
+			if !found || !strings.EqualFold(scheme, "Bearer") {
 				WriteError(w, http.StatusUnauthorized, "invalid authorization format, expected 'Bearer <token>'")
 				return
 			}
 
-			tokenString := strings.TrimSpace(parts[1])
+			tokenString = strings.TrimSpace(tokenString)
 			claims, err := tokenManager.ValidateAccessToken(tokenString)
 			if err != nil {
 				WriteError(w, http.StatusUnauthorized, "invalid or expired access token")

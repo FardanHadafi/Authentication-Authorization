@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 )
 
@@ -34,7 +35,7 @@ func DefaultCSRFConfig() CSRFConfig {
 		origins = append(origins, strings.TrimRight(appURL, "/"))
 	}
 	if customOrigins := os.Getenv("CSRF_ALLOWED_ORIGINS"); customOrigins != "" {
-		for _, o := range strings.Split(customOrigins, ",") {
+		for o := range strings.SplitSeq(customOrigins, ",") {
 			if trimmed := strings.TrimSpace(o); trimmed != "" {
 				origins = append(origins, strings.TrimRight(trimmed, "/"))
 			}
@@ -61,13 +62,15 @@ func GenerateCSRFToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+var safeHTTPMethods = []string{
+	http.MethodGet,
+	http.MethodHead,
+	http.MethodOptions,
+	http.MethodTrace,
+}
+
 func isSafeMethod(method string) bool {
-	switch method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(safeHTTPMethods, method)
 }
 
 func isOriginAllowed(rawOrigin, host string, allowedOrigins []string) bool {
@@ -82,15 +85,11 @@ func isOriginAllowed(rawOrigin, host string, allowedOrigins []string) bool {
 		return true
 	}
 
-	// 2. Cek terhadap daftar whitelist
-	for _, allowed := range allowedOrigins {
+	// 2. Cek terhadap daftar whitelist menggunakan slices.ContainsFunc
+	return slices.ContainsFunc(allowedOrigins, func(allowed string) bool {
 		allowed = strings.ToLower(strings.TrimRight(allowed, "/"))
-		if allowed == "*" || allowed == rawOrigin {
-			return true
-		}
-	}
-
-	return false
+		return allowed == "*" || allowed == rawOrigin
+	})
 }
 
 // CSRFMiddleware menyediakan proteksi CSRF Defense-in-Depth multi-lapis:
@@ -114,11 +113,9 @@ func CSRFMiddleware(cfg CSRFConfig) Middleware {
 			}
 
 			// 2. Bypass untuk Excluded Paths (seperti /metrics)
-			for _, path := range cfg.ExcludedPaths {
-				if r.URL.Path == path {
-					next.ServeHTTP(w, r)
-					return
-				}
+			if slices.Contains(cfg.ExcludedPaths, r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
 			}
 
 			// 3. Layer 1: W3C Fetch Metadata Validation (Sec-Fetch-Site)
