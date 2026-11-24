@@ -47,13 +47,16 @@ type RolePermission struct {
 }
 
 type User struct {
-	ID           uuid.UUID `json:"id"`
-	FullName     string    `json:"full_name"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"password_hash"`
-	Role         string    `json:"role"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	TokenVersion int32     `json:"token_version"`
+	ID               uuid.UUID   `json:"id"`
+	FullName         string      `json:"full_name"`
+	Email            string      `json:"email"`
+	PasswordHash     string      `json:"password_hash"`
+	Role             string      `json:"role"`
+	Status           string      `json:"status"`
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
+	TokenVersion     int32       `json:"token_version"`
+	MfaEnabled       bool        `json:"mfa_enabled"`
+	MfaSecret        pgtype.Text `json:"mfa_secret"`
+	MfaRecoveryCodes []string    `json:"mfa_recovery_codes"`
 }

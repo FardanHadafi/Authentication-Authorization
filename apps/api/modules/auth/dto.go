@@ -50,6 +50,7 @@ type UserResponse struct {
 	Role         string    `json:"role"`
 	Status       string    `json:"status"`
 	TokenVersion int       `json:"token_version"`
+	MFAEnabled   bool      `json:"mfa_enabled"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -58,8 +59,10 @@ type AuthResponse struct {
 	TokenType    string       `json:"token_type,omitempty"` // "Bearer"
 	AccessToken  string       `json:"access_token,omitempty"`
 	RefreshToken string       `json:"refresh_token,omitempty"`
-	ExpiresAt    time.Time    `json:"expires_at"`
-	User         UserResponse `json:"user"`
+	ExpiresAt    time.Time    `json:"expires_at,omitempty"`
+	MFARequired  bool         `json:"mfa_required,omitempty"`
+	MFAToken     string       `json:"mfa_token,omitempty"`
+	User         UserResponse `json:"user,omitempty"`
 }
 
 type AuditLogResponse struct {
@@ -91,4 +94,29 @@ type CSRFTokenResponse struct {
 type UserPermissionsResponse struct {
 	Role        string   `json:"role"`
 	Permissions []string `json:"permissions"`
+}
+
+type MFASetupResponse struct {
+	Secret        string   `json:"secret"`
+	QRCodeURL     string   `json:"qr_code_url"`
+	RecoveryCodes []string `json:"recovery_codes"`
+}
+
+type MFAEnableRequest struct {
+	Code string `json:"code" validate:"required,len=6"`
+}
+
+type MFADisableRequest struct {
+	Code     string `json:"code" validate:"required"`
+	Password string `json:"password" validate:"required"`
+}
+
+type MFAVerifyRequest struct {
+	MFAToken     string `json:"mfa_token" validate:"required"`
+	Code         string `json:"code,omitempty"`
+	RecoveryCode string `json:"recovery_code,omitempty"`
+}
+
+type MFAMessageResponse struct {
+	Message string `json:"message"`
 }

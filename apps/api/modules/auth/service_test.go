@@ -9,8 +9,11 @@ import (
 	"authentication-authorization/shared"
 	"authentication-authorization/shared/db"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/pquerna/otp/totp"
+	"github.com/redis/go-redis/v9"
 )
 
 type mockQuerier struct {
@@ -129,5 +132,84 @@ func TestAuthService_GetUserPermissions(t *testing.T) {
 	}
 	if len(res.Permissions) != 2 {
 		t.Errorf("expected 2 permissions, got %d", len(res.Permissions))
+	}
+}
+
+type mockQuerierWithUser struct {
+	db.Querier
+	user       db.GetUserByIDRow
+	mfaEnabled bool
+	mfaSecret  string
+}
+
+func (m *mockQuerierWithUser) GetUserByID(ctx context.Context, id uuid.UUID) (db.GetUserByIDRow, error) {
+	return m.user, nil
+}
+
+func (m *mockQuerierWithUser) EnableUserMFA(ctx context.Context, arg db.EnableUserMFAParams) error {
+	m.mfaEnabled = true
+	m.mfaSecret = arg.MfaSecret.String
+	return nil
+}
+
+func TestAuthService_MFAFlow(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	userID := uuid.New()
+	user := db.GetUserByIDRow{
+		ID:         userID,
+		Email:      "test@example.com",
+		FullName:   "Test User",
+		Role:       "member",
+		Status:     "active",
+		MfaEnabled: false,
+	}
+
+	mq := &mockQuerierWithUser{
+		user: user,
+	}
+
+	svc := NewAuthService(mq, nil, nil, rdb, nil, nil, nil)
+	ctx := context.Background()
+
+	// 1. Setup MFA
+	setupRes, err := svc.SetupMFA(ctx, userID)
+	if err != nil {
+		t.Fatalf("expected no error on SetupMFA, got %v", err)
+	}
+
+	if setupRes.Secret == "" {
+		t.Errorf("expected secret to not be empty")
+	}
+	if len(setupRes.RecoveryCodes) != 8 {
+		t.Errorf("expected 8 recovery codes, got %d", len(setupRes.RecoveryCodes))
+	}
+
+	// 2. Enable MFA with invalid code should fail
+	err = svc.EnableMFA(ctx, userID, "000000")
+	if err == nil {
+		t.Errorf("expected invalid code to fail EnableMFA")
+	}
+
+	// 3. Enable MFA with valid code should succeed
+	validCode, err := totp.GenerateCode(setupRes.Secret, time.Now())
+	if err != nil {
+		t.Fatalf("failed to generate code: %v", err)
+	}
+
+	err = svc.EnableMFA(ctx, userID, validCode)
+	if err != nil {
+		t.Fatalf("expected valid code to enable MFA, got %v", err)
+	}
+
+	if !mq.mfaEnabled {
+		t.Errorf("expected user in DB to have MFA enabled")
 	}
 }

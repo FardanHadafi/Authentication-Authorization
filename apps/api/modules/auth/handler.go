@@ -29,6 +29,10 @@ type AuthHandler interface {
 	ListAuditLogs(w http.ResponseWriter, r *http.Request)
 	GetCSRFToken(w http.ResponseWriter, r *http.Request)
 	GetPermissions(w http.ResponseWriter, r *http.Request)
+	SetupMFA(w http.ResponseWriter, r *http.Request)
+	EnableMFA(w http.ResponseWriter, r *http.Request)
+	DisableMFA(w http.ResponseWriter, r *http.Request)
+	VerifyMFA(w http.ResponseWriter, r *http.Request)
 }
 
 type authHandler struct {
@@ -395,6 +399,103 @@ func (h *authHandler) GetPermissions(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logger.Error("failed to get user permissions", "error", err)
 		shared.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	_ = shared.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *authHandler) SetupMFA(w http.ResponseWriter, r *http.Request) {
+	claims := shared.GetUserClaims(r.Context())
+	if claims == nil {
+		shared.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	res, err := h.authService.SetupMFA(r.Context(), claims.UserID)
+	if err != nil {
+		h.logger.Error("failed to setup MFA", "error", err)
+		shared.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	_ = shared.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *authHandler) EnableMFA(w http.ResponseWriter, r *http.Request) {
+	claims := shared.GetUserClaims(r.Context())
+	if claims == nil {
+		shared.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var req MFAEnableRequest
+	if err := json.UnmarshalRead(r.Body, &req); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.validator.StructCtx(r.Context(), req); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.authService.EnableMFA(r.Context(), claims.UserID, req.Code); err != nil {
+		h.logger.Error("failed to enable MFA", "error", err)
+		shared.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	_ = shared.WriteJSON(w, http.StatusOK, MFAMessageResponse{
+		Message: "Multi-Factor Authentication has been successfully enabled",
+	})
+}
+
+func (h *authHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
+	claims := shared.GetUserClaims(r.Context())
+	if claims == nil {
+		shared.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var req MFADisableRequest
+	if err := json.UnmarshalRead(r.Body, &req); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.validator.StructCtx(r.Context(), req); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.authService.DisableMFA(r.Context(), claims.UserID, req.Code, req.Password); err != nil {
+		h.logger.Error("failed to disable MFA", "error", err)
+		shared.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	_ = shared.WriteJSON(w, http.StatusOK, MFAMessageResponse{
+		Message: "Multi-Factor Authentication has been successfully disabled",
+	})
+}
+
+func (h *authHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
+	var req MFAVerifyRequest
+	if err := json.UnmarshalRead(r.Body, &req); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.validator.StructCtx(r.Context(), req); err != nil {
+		shared.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	res, err := h.authService.VerifyMFA(r.Context(), req)
+	if err != nil {
+		h.logger.Error("failed to verify MFA", "error", err)
+		shared.WriteError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 

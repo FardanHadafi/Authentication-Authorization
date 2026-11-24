@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -43,6 +44,10 @@ type AuthService interface {
 	ListUsers(ctx context.Context) ([]UserResponse, error)
 	ListAuditLogs(ctx context.Context, page, limit int32) (PaginatedAuditLogsResponse, error)
 	GetUserPermissions(ctx context.Context, role string) (UserPermissionsResponse, error)
+	SetupMFA(ctx context.Context, userID uuid.UUID) (MFASetupResponse, error)
+	EnableMFA(ctx context.Context, userID uuid.UUID, code string) error
+	DisableMFA(ctx context.Context, userID uuid.UUID, code, password string) error
+	VerifyMFA(ctx context.Context, request MFAVerifyRequest) (AuthResponse, error)
 }
 
 type authService struct {
@@ -137,6 +142,7 @@ func (a *authService) Register(ctx context.Context, request CreateUserRequest) (
 		Role:         newUser.Role,
 		Status:       newUser.Status,
 		TokenVersion: int(newUser.TokenVersion),
+		MFAEnabled:   newUser.MfaEnabled,
 		CreatedAt:    newUser.CreatedAt,
 		UpdatedAt:    newUser.UpdatedAt,
 	}, nil
@@ -263,6 +269,32 @@ func (a *authService) Login(ctx context.Context, request LoginUserRequest) (Auth
 		return AuthResponse{}, errors.New("account is not active yet, please check your verification link in your mailbox")
 	}
 
+	// Cek apakah MFA diaktifkan untuk akun ini
+	if user.MfaEnabled {
+		mfaToken := uuid.New().String()
+		challengeKey := fmt.Sprintf("mfa:challenge:%s", mfaToken)
+		if err := a.redis.Set(ctx, challengeKey, user.ID.String(), 5*time.Minute).Err(); err != nil {
+			return AuthResponse{}, fmt.Errorf("failed to save MFA challenge to redis: %w", err)
+		}
+
+		if a.auditLogger != nil {
+			a.auditLogger.Log(ctx, shared.AuditEntry{
+				ActorID:      &user.ID,
+				ActorEmail:   user.Email,
+				ActorRole:    user.Role,
+				Action:       "auth.mfa_challenge_issued",
+				ResourceType: "session",
+				ResourceID:   user.ID.String(),
+				Status:       "success",
+			})
+		}
+
+		return AuthResponse{
+			MFARequired: true,
+			MFAToken:    mfaToken,
+		}, nil
+	}
+
 	// Terbitkan AccessToken
 	accessToken, expiresAt, err := a.tokenManager.GenerateAccessToken(user.ID, user.Email, user.Role, int(user.TokenVersion))
 	if err != nil {
@@ -306,6 +338,7 @@ func (a *authService) Login(ctx context.Context, request LoginUserRequest) (Auth
 			Role:         user.Role,
 			Status:       user.Status,
 			TokenVersion: int(user.TokenVersion),
+			MFAEnabled:   user.MfaEnabled,
 			CreatedAt:    user.CreatedAt,
 			UpdatedAt:    user.UpdatedAt,
 		},
@@ -384,6 +417,7 @@ func (a *authService) RefreshToken(ctx context.Context, refreshToken string) (Au
 			Role:         user.Role,
 			Status:       user.Status,
 			TokenVersion: int(user.TokenVersion),
+			MFAEnabled:   user.MfaEnabled,
 			CreatedAt:    user.CreatedAt,
 			UpdatedAt:    user.UpdatedAt,
 		},
@@ -641,6 +675,7 @@ func (a *authService) GetProfile(ctx context.Context, userID uuid.UUID) (UserRes
 		Role:         user.Role,
 		Status:       user.Status,
 		TokenVersion: int(user.TokenVersion),
+		MFAEnabled:   user.MfaEnabled,
 		CreatedAt:    user.CreatedAt,
 		UpdatedAt:    user.UpdatedAt,
 	}, nil
@@ -661,6 +696,7 @@ func (a *authService) ListUsers(ctx context.Context) ([]UserResponse, error) {
 			Role:         u.Role,
 			Status:       u.Status,
 			TokenVersion: int(u.TokenVersion),
+			MFAEnabled:   u.MfaEnabled,
 			CreatedAt:    u.CreatedAt,
 			UpdatedAt:    u.UpdatedAt,
 		}
@@ -751,5 +787,263 @@ func (a *authService) GetUserPermissions(ctx context.Context, role string) (User
 	return UserPermissionsResponse{
 		Role:        role,
 		Permissions: perms,
+	}, nil
+}
+
+func (a *authService) SetupMFA(ctx context.Context, userID uuid.UUID) (MFASetupResponse, error) {
+	if a.redis == nil {
+		return MFASetupResponse{}, ErrRedisClientNotInitialized
+	}
+
+	user, err := a.querier.GetUserByID(ctx, userID)
+	if err != nil {
+		return MFASetupResponse{}, ErrUserNotFound
+	}
+
+	if user.MfaEnabled {
+		return MFASetupResponse{}, errors.New("MFA is already enabled on this account")
+	}
+
+	key, err := shared.GenerateTOTPSecret(user.Email)
+	if err != nil {
+		return MFASetupResponse{}, fmt.Errorf("failed to generate TOTP secret: %w", err)
+	}
+
+	plainCodes, hashedCodes, err := shared.GenerateRecoveryCodes(8)
+	if err != nil {
+		return MFASetupResponse{}, fmt.Errorf("failed to generate recovery codes: %w", err)
+	}
+
+	setupData := struct {
+		Secret        string   `json:"secret"`
+		RecoveryCodes []string `json:"recovery_codes"`
+	}{
+		Secret:        key.Secret(),
+		RecoveryCodes: hashedCodes,
+	}
+
+	dataBytes, err := json.Marshal(setupData)
+	if err != nil {
+		return MFASetupResponse{}, fmt.Errorf("failed to marshal setup data: %w", err)
+	}
+
+	setupKey := fmt.Sprintf("mfa:setup:%s", user.ID.String())
+	if err := a.redis.Set(ctx, setupKey, string(dataBytes), 15*time.Minute).Err(); err != nil {
+		return MFASetupResponse{}, fmt.Errorf("failed to save temporary MFA setup in redis: %w", err)
+	}
+
+	return MFASetupResponse{
+		Secret:        key.Secret(),
+		QRCodeURL:     key.URL(),
+		RecoveryCodes: plainCodes,
+	}, nil
+}
+
+func (a *authService) EnableMFA(ctx context.Context, userID uuid.UUID, code string) error {
+	if a.redis == nil {
+		return ErrRedisClientNotInitialized
+	}
+
+	setupKey := fmt.Sprintf("mfa:setup:%s", userID.String())
+	setupJSON, err := a.redis.Get(ctx, setupKey).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return errors.New("MFA setup session expired or not found, please initiate setup again")
+		}
+		return fmt.Errorf("failed to retrieve MFA setup session: %w", err)
+	}
+
+	var setupData struct {
+		Secret        string   `json:"secret"`
+		RecoveryCodes []string `json:"recovery_codes"`
+	}
+	if err := json.Unmarshal([]byte(setupJSON), &setupData); err != nil {
+		return fmt.Errorf("failed to parse setup data: %w", err)
+	}
+
+	if !shared.ValidateTOTPCode(code, setupData.Secret) {
+		return errors.New("invalid verification code")
+	}
+
+	err = a.querier.EnableUserMFA(ctx, db.EnableUserMFAParams{
+		ID:               userID,
+		MfaSecret:        pgtype.Text{String: setupData.Secret, Valid: true},
+		MfaRecoveryCodes: setupData.RecoveryCodes,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to enable MFA in database: %w", err)
+	}
+
+	_ = a.redis.Del(ctx, setupKey).Err()
+
+	if a.auditLogger != nil {
+		a.auditLogger.Log(ctx, shared.AuditEntry{
+			ActorID:      &userID,
+			Action:       "auth.mfa_enabled",
+			ResourceType: "user",
+			ResourceID:   userID.String(),
+			Status:       "success",
+		})
+	}
+
+	return nil
+}
+
+func (a *authService) DisableMFA(ctx context.Context, userID uuid.UUID, code, password string) error {
+	user, err := a.querier.GetUserByID(ctx, userID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+
+	if !user.MfaEnabled {
+		return errors.New("MFA is not enabled on this account")
+	}
+
+	match, err := argon2id.ComparePasswordAndHash(password, user.PasswordHash)
+	if err != nil || !match {
+		return ErrInvalidCredentials
+	}
+
+	if !shared.ValidateTOTPCode(code, user.MfaSecret.String) {
+		return errors.New("invalid verification code")
+	}
+
+	if err := a.querier.DisableUserMFA(ctx, userID); err != nil {
+		return fmt.Errorf("failed to disable MFA in database: %w", err)
+	}
+
+	if a.auditLogger != nil {
+		a.auditLogger.Log(ctx, shared.AuditEntry{
+			ActorID:      &userID,
+			Action:       "auth.mfa_disabled",
+			ResourceType: "user",
+			ResourceID:   userID.String(),
+			Status:       "success",
+		})
+	}
+
+	return nil
+}
+
+func (a *authService) VerifyMFA(ctx context.Context, request MFAVerifyRequest) (AuthResponse, error) {
+	if a.redis == nil {
+		return AuthResponse{}, ErrRedisClientNotInitialized
+	}
+
+	challengeKey := fmt.Sprintf("mfa:challenge:%s", strings.TrimSpace(request.MFAToken))
+	userIDStr, err := a.redis.Get(ctx, challengeKey).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return AuthResponse{}, errors.New("invalid or expired MFA challenge session")
+		}
+		return AuthResponse{}, fmt.Errorf("failed to get MFA challenge: %w", err)
+	}
+
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return AuthResponse{}, fmt.Errorf("invalid user id in MFA challenge: %w", err)
+	}
+
+	user, err := a.querier.GetUserByID(ctx, userID)
+	if err != nil {
+		return AuthResponse{}, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	if !user.MfaEnabled {
+		return AuthResponse{}, errors.New("MFA is not enabled for this account")
+	}
+
+	// Validasi via TOTP Code atau Recovery Code
+	if request.Code != "" {
+		if !shared.ValidateTOTPCode(request.Code, user.MfaSecret.String) {
+			if a.auditLogger != nil {
+				a.auditLogger.Log(ctx, shared.AuditEntry{
+					ActorID:      &user.ID,
+					ActorEmail:   user.Email,
+					ActorRole:    user.Role,
+					Action:       "auth.mfa_verify",
+					ResourceType: "session",
+					Status:       "failure",
+					Metadata:     map[string]any{"reason": "invalid_code"},
+				})
+			}
+			return AuthResponse{}, errors.New("invalid 2FA authentication code")
+		}
+	} else if request.RecoveryCode != "" {
+		valid, remainingCodes := shared.ValidateAndConsumeRecoveryCode(request.RecoveryCode, user.MfaRecoveryCodes)
+		if !valid {
+			if a.auditLogger != nil {
+				a.auditLogger.Log(ctx, shared.AuditEntry{
+					ActorID:      &user.ID,
+					ActorEmail:   user.Email,
+					ActorRole:    user.Role,
+					Action:       "auth.mfa_verify",
+					ResourceType: "session",
+					Status:       "failure",
+					Metadata:     map[string]any{"reason": "invalid_recovery_code"},
+				})
+			}
+			return AuthResponse{}, errors.New("invalid or previously consumed recovery code")
+		}
+
+		if err := a.querier.UpdateUserRecoveryCodes(ctx, db.UpdateUserRecoveryCodesParams{
+			ID:               user.ID,
+			MfaRecoveryCodes: remainingCodes,
+		}); err != nil {
+			return AuthResponse{}, fmt.Errorf("failed to update recovery codes in database: %w", err)
+		}
+	} else {
+		return AuthResponse{}, errors.New("either code or recovery_code is required")
+	}
+
+	// Hapus challenge token dari Redis agar tidak bisa di-reuse
+	_ = a.redis.Del(ctx, challengeKey).Err()
+
+	// Terbitkan AccessToken
+	accessToken, expiresAt, err := a.tokenManager.GenerateAccessToken(user.ID, user.Email, user.Role, int(user.TokenVersion))
+	if err != nil {
+		return AuthResponse{}, fmt.Errorf("failed to generate access token: %w", err)
+	}
+
+	// Terbitkan RefreshToken
+	refreshToken, err := a.tokenManager.GenerateRefreshToken()
+	if err != nil {
+		return AuthResponse{}, fmt.Errorf("failed to generate refresh token: %w", err)
+	}
+
+	// Simpan refresh token ke Redis dengan TTL 7 hari
+	refreshKey := fmt.Sprintf("refresh:%s", refreshToken)
+	if err := a.redis.Set(ctx, refreshKey, user.ID.String(), 7*24*time.Hour).Err(); err != nil {
+		return AuthResponse{}, fmt.Errorf("failed to save refresh token to redis: %w", err)
+	}
+
+	if a.auditLogger != nil {
+		a.auditLogger.Log(ctx, shared.AuditEntry{
+			ActorID:      &user.ID,
+			ActorEmail:   user.Email,
+			ActorRole:    user.Role,
+			Action:       "auth.login_mfa_success",
+			ResourceType: "session",
+			ResourceID:   user.ID.String(),
+			Status:       "success",
+		})
+	}
+
+	return AuthResponse{
+		TokenType:    "Bearer",
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresAt:    expiresAt,
+		User: UserResponse{
+			ID:           user.ID.String(),
+			FullName:     user.FullName,
+			Email:        user.Email,
+			Role:         user.Role,
+			Status:       user.Status,
+			TokenVersion: int(user.TokenVersion),
+			MFAEnabled:   user.MfaEnabled,
+			CreatedAt:    user.CreatedAt,
+			UpdatedAt:    user.UpdatedAt,
+		},
 	}, nil
 }

@@ -5,10 +5,10 @@ INSERT INTO users (
     password_hash
 ) VALUES (
     $1, $2, $3
-) RETURNING id, full_name, email, password_hash, role, status, token_version, created_at, updated_at;
+) RETURNING id, full_name, email, password_hash, role, status, token_version, mfa_enabled, created_at, updated_at;
 
 -- name: GetUserByEmail :one
-SELECT id, full_name, email, password_hash, role, status, token_version, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1;
+SELECT id, full_name, email, password_hash, role, status, token_version, mfa_enabled, mfa_secret, mfa_recovery_codes, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1;
 
 -- name: UpdateUserStatus :exec
 UPDATE users
@@ -17,7 +17,7 @@ SET status = $2,
 WHERE id = $1;
 
 -- name: GetUserByID :one
-SELECT id, full_name, email, password_hash, role, status, token_version, created_at, updated_at
+SELECT id, full_name, email, password_hash, role, status, token_version, mfa_enabled, mfa_secret, mfa_recovery_codes, created_at, updated_at
 FROM users
 WHERE id = $1 LIMIT 1;
 
@@ -38,6 +38,28 @@ RETURNING token_version;
 SELECT token_version FROM users WHERE id = $1 LIMIT 1;
 
 -- name: ListUsers :many
-SELECT id, full_name, email, role, status, token_version, created_at, updated_at
+SELECT id, full_name, email, role, status, token_version, mfa_enabled, created_at, updated_at
 FROM users
 ORDER BY created_at DESC LIMIT 10;
+
+-- name: EnableUserMFA :exec
+UPDATE users
+SET mfa_enabled = TRUE,
+    mfa_secret = $2,
+    mfa_recovery_codes = $3,
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: DisableUserMFA :exec
+UPDATE users
+SET mfa_enabled = FALSE,
+    mfa_secret = NULL,
+    mfa_recovery_codes = '{}',
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: UpdateUserRecoveryCodes :exec
+UPDATE users
+SET mfa_recovery_codes = $2,
+    updated_at = NOW()
+WHERE id = $1;

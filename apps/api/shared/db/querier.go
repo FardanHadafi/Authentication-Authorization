@@ -15,6 +15,8 @@ type Querier interface {
 	CountAuditLogs(ctx context.Context) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) (AuditLog, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
+	DisableUserMFA(ctx context.Context, id uuid.UUID) error
+	EnableUserMFA(ctx context.Context, arg EnableUserMFAParams) error
 	GetRolePermissions(ctx context.Context, roleID string) ([]string, error)
 	GetUserByEmail(ctx context.Context, lower string) (GetUserByEmailRow, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error)
@@ -25,6 +27,7 @@ type Querier interface {
 	ListRoles(ctx context.Context) ([]Role, error)
 	ListUsers(ctx context.Context) ([]ListUsersRow, error)
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
+	UpdateUserRecoveryCodes(ctx context.Context, arg UpdateUserRecoveryCodesParams) error
 	UpdateUserStatus(ctx context.Context, arg UpdateUserStatusParams) error
 }
 

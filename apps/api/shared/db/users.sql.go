@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createUser = `-- name: CreateUser :one
@@ -19,7 +20,7 @@ INSERT INTO users (
     password_hash
 ) VALUES (
     $1, $2, $3
-) RETURNING id, full_name, email, password_hash, role, status, token_version, created_at, updated_at
+) RETURNING id, full_name, email, password_hash, role, status, token_version, mfa_enabled, created_at, updated_at
 `
 
 type CreateUserParams struct {
@@ -36,6 +37,7 @@ type CreateUserRow struct {
 	Role         string    `json:"role"`
 	Status       string    `json:"status"`
 	TokenVersion int32     `json:"token_version"`
+	MfaEnabled   bool      `json:"mfa_enabled"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -51,26 +53,64 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 		&i.Role,
 		&i.Status,
 		&i.TokenVersion,
+		&i.MfaEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
+const disableUserMFA = `-- name: DisableUserMFA :exec
+UPDATE users
+SET mfa_enabled = FALSE,
+    mfa_secret = NULL,
+    mfa_recovery_codes = '{}',
+    updated_at = NOW()
+WHERE id = $1
+`
+
+func (q *Queries) DisableUserMFA(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, disableUserMFA, id)
+	return err
+}
+
+const enableUserMFA = `-- name: EnableUserMFA :exec
+UPDATE users
+SET mfa_enabled = TRUE,
+    mfa_secret = $2,
+    mfa_recovery_codes = $3,
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type EnableUserMFAParams struct {
+	ID               uuid.UUID   `json:"id"`
+	MfaSecret        pgtype.Text `json:"mfa_secret"`
+	MfaRecoveryCodes []string    `json:"mfa_recovery_codes"`
+}
+
+func (q *Queries) EnableUserMFA(ctx context.Context, arg EnableUserMFAParams) error {
+	_, err := q.db.Exec(ctx, enableUserMFA, arg.ID, arg.MfaSecret, arg.MfaRecoveryCodes)
+	return err
+}
+
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, full_name, email, password_hash, role, status, token_version, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1
+SELECT id, full_name, email, password_hash, role, status, token_version, mfa_enabled, mfa_secret, mfa_recovery_codes, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1
 `
 
 type GetUserByEmailRow struct {
-	ID           uuid.UUID `json:"id"`
-	FullName     string    `json:"full_name"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"password_hash"`
-	Role         string    `json:"role"`
-	Status       string    `json:"status"`
-	TokenVersion int32     `json:"token_version"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID               uuid.UUID   `json:"id"`
+	FullName         string      `json:"full_name"`
+	Email            string      `json:"email"`
+	PasswordHash     string      `json:"password_hash"`
+	Role             string      `json:"role"`
+	Status           string      `json:"status"`
+	TokenVersion     int32       `json:"token_version"`
+	MfaEnabled       bool        `json:"mfa_enabled"`
+	MfaSecret        pgtype.Text `json:"mfa_secret"`
+	MfaRecoveryCodes []string    `json:"mfa_recovery_codes"`
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
 }
 
 func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (GetUserByEmailRow, error) {
@@ -84,6 +124,9 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (GetUserByEm
 		&i.Role,
 		&i.Status,
 		&i.TokenVersion,
+		&i.MfaEnabled,
+		&i.MfaSecret,
+		&i.MfaRecoveryCodes,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -91,21 +134,24 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (GetUserByEm
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, full_name, email, password_hash, role, status, token_version, created_at, updated_at
+SELECT id, full_name, email, password_hash, role, status, token_version, mfa_enabled, mfa_secret, mfa_recovery_codes, created_at, updated_at
 FROM users
 WHERE id = $1 LIMIT 1
 `
 
 type GetUserByIDRow struct {
-	ID           uuid.UUID `json:"id"`
-	FullName     string    `json:"full_name"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"password_hash"`
-	Role         string    `json:"role"`
-	Status       string    `json:"status"`
-	TokenVersion int32     `json:"token_version"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID               uuid.UUID   `json:"id"`
+	FullName         string      `json:"full_name"`
+	Email            string      `json:"email"`
+	PasswordHash     string      `json:"password_hash"`
+	Role             string      `json:"role"`
+	Status           string      `json:"status"`
+	TokenVersion     int32       `json:"token_version"`
+	MfaEnabled       bool        `json:"mfa_enabled"`
+	MfaSecret        pgtype.Text `json:"mfa_secret"`
+	MfaRecoveryCodes []string    `json:"mfa_recovery_codes"`
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
 }
 
 func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error) {
@@ -119,6 +165,9 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow
 		&i.Role,
 		&i.Status,
 		&i.TokenVersion,
+		&i.MfaEnabled,
+		&i.MfaSecret,
+		&i.MfaRecoveryCodes,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -152,7 +201,7 @@ func (q *Queries) IncrementUserTokenVersion(ctx context.Context, id uuid.UUID) (
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, full_name, email, role, status, token_version, created_at, updated_at
+SELECT id, full_name, email, role, status, token_version, mfa_enabled, created_at, updated_at
 FROM users
 ORDER BY created_at DESC LIMIT 10
 `
@@ -164,6 +213,7 @@ type ListUsersRow struct {
 	Role         string    `json:"role"`
 	Status       string    `json:"status"`
 	TokenVersion int32     `json:"token_version"`
+	MfaEnabled   bool      `json:"mfa_enabled"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -184,6 +234,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 			&i.Role,
 			&i.Status,
 			&i.TokenVersion,
+			&i.MfaEnabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -211,6 +262,23 @@ type UpdateUserPasswordParams struct {
 
 func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
 	_, err := q.db.Exec(ctx, updateUserPassword, arg.ID, arg.PasswordHash)
+	return err
+}
+
+const updateUserRecoveryCodes = `-- name: UpdateUserRecoveryCodes :exec
+UPDATE users
+SET mfa_recovery_codes = $2,
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type UpdateUserRecoveryCodesParams struct {
+	ID               uuid.UUID `json:"id"`
+	MfaRecoveryCodes []string  `json:"mfa_recovery_codes"`
+}
+
+func (q *Queries) UpdateUserRecoveryCodes(ctx context.Context, arg UpdateUserRecoveryCodesParams) error {
+	_, err := q.db.Exec(ctx, updateUserRecoveryCodes, arg.ID, arg.MfaRecoveryCodes)
 	return err
 }
 

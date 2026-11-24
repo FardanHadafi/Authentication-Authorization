@@ -45,6 +45,10 @@ func RegisterRoutes(mux *http.ServeMux, handler AuthHandler, tokenManager shared
 		http.HandlerFunc(handler.GetCSRFToken),
 		shared.RateLimitMiddleware(limiter, shared.IPKey("csrf"), 60, time.Minute),
 	))
+	mux.Handle("POST /api/auth/mfa/verify", shared.Chain(
+		http.HandlerFunc(handler.VerifyMFA),
+		shared.RateLimitMiddleware(limiter, shared.IPKey("mfa-verify"), 10, 15*time.Minute),
+	))
 
 	// Protected Routes
 	mux.Handle("GET /api/auth/me", shared.Chain(
@@ -56,6 +60,21 @@ func RegisterRoutes(mux *http.ServeMux, handler AuthHandler, tokenManager shared
 		http.HandlerFunc(handler.GetPermissions),
 		shared.RequireAuth(tokenManager, revocationChecker),
 		shared.RateLimitMiddleware(limiter, shared.UserKey("me-permissions"), 60, time.Minute),
+	))
+	mux.Handle("POST /api/auth/mfa/setup", shared.Chain(
+		http.HandlerFunc(handler.SetupMFA),
+		shared.RequireAuth(tokenManager, revocationChecker),
+		shared.RateLimitMiddleware(limiter, shared.UserKey("mfa-setup"), 5, 15*time.Minute),
+	))
+	mux.Handle("POST /api/auth/mfa/enable", shared.Chain(
+		http.HandlerFunc(handler.EnableMFA),
+		shared.RequireAuth(tokenManager, revocationChecker),
+		shared.RateLimitMiddleware(limiter, shared.UserKey("mfa-enable"), 5, 15*time.Minute),
+	))
+	mux.Handle("POST /api/auth/mfa/disable", shared.Chain(
+		http.HandlerFunc(handler.DisableMFA),
+		shared.RequireAuth(tokenManager, revocationChecker),
+		shared.RateLimitMiddleware(limiter, shared.UserKey("mfa-disable"), 3, 15*time.Minute),
 	))
 
 	// Admin Routes (Granular PBAC Enforcement)

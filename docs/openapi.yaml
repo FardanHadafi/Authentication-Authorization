@@ -557,6 +557,154 @@ paths:
         '429':
           $ref: '#/components/responses/TooManyRequestsResponse'
 
+  /api/auth/mfa/verify:
+    post:
+      tags:
+        - Authentication
+      summary: Verify 2FA challenge login
+      description: |
+        Completes the two-factor authentication login challenge using a 6-digit TOTP code
+        (from Google Authenticator) or an 8-character emergency backup recovery code.
+      operationId: verifyMFA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MFAVerifyRequest'
+      responses:
+        '200':
+          description: 2FA challenge verified, session established
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Bad request - missing code or recovery code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized - invalid challenge token, code, or recovery code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
+
+  /api/auth/mfa/setup:
+    post:
+      tags:
+        - Authentication
+      summary: Initialize MFA setup (Google Authenticator)
+      description: |
+        Protected endpoint that generates a new TOTP secret (compatible with Google Authenticator),
+        an `otpauth://` QR Code URI, and 8 one-time emergency backup recovery codes.
+      operationId: setupMFA
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Temporary MFA setup initialized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MFASetupResponse'
+        '400':
+          description: Bad request - MFA already enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
+
+  /api/auth/mfa/enable:
+    post:
+      tags:
+        - Authentication
+      summary: Confirm and activate MFA
+      description: |
+        Protected endpoint that verifies the first 6-digit code from Google Authenticator to confirm
+        proper configuration, activates MFA on the account, and hashes recovery codes into database.
+      operationId: enableMFA
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MFAEnableRequest'
+      responses:
+        '200':
+          description: MFA activated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MFAMessageResponse'
+        '400':
+          description: Invalid code or expired setup session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
+
+  /api/auth/mfa/disable:
+    post:
+      tags:
+        - Authentication
+      summary: Deactivate MFA
+      description: |
+        Protected endpoint that verifies the user's password and a current 6-digit TOTP code
+        before disabling Multi-Factor Authentication.
+      operationId: disableMFA
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MFADisableRequest'
+      responses:
+        '200':
+          description: MFA deactivated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MFAMessageResponse'
+        '400':
+          description: Invalid code or MFA not enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Invalid password or unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
+
   /api/admin/users:
     get:
       tags:
@@ -879,6 +1027,10 @@ components:
           type: integer
           description: Incrementing security token version for instant session revocation
           example: 1
+        mfa_enabled:
+          type: boolean
+          description: Whether Multi-Factor Authentication (TOTP) is activated
+          example: false
         created_at:
           type: string
           format: date-time
@@ -910,6 +1062,14 @@ components:
           format: date-time
           description: Absolute expiration time of the access token
           example: "2026-11-22T04:15:55Z"
+        mfa_required:
+          type: boolean
+          description: Flag indicating that the user must complete a 2FA challenge
+          example: false
+        mfa_token:
+          type: string
+          description: Short-lived challenge session token for 2FA verification
+          example: "01935693-bb6c-7d4a-aa76-e0278ceec002"
         user:
           $ref: '#/components/schemas/UserResponse'
 
@@ -1043,3 +1203,80 @@ components:
             type: string
           description: List of assigned granular PBAC permissions
           example: ["users:read", "users:write", "users:delete", "audit_logs:read", "profile:read", "profile:write"]
+
+    MFASetupResponse:
+      type: object
+      required:
+        - secret
+        - qr_code_url
+        - recovery_codes
+      properties:
+        secret:
+          type: string
+          description: Base32 encoded TOTP secret for manual entry
+          example: "JBSWY3DPEHPK3PXP"
+        qr_code_url:
+          type: string
+          description: Standard otpauth URI for QR code scanning in Google Authenticator
+          example: "otpauth://totp/AuthAPI:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=AuthAPI"
+        recovery_codes:
+          type: array
+          items:
+            type: string
+          description: One-time emergency backup recovery codes
+          example: ["ABCD-1234", "EFGH-5678"]
+
+    MFAEnableRequest:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          minLength: 6
+          maxLength: 6
+          description: 6-digit TOTP confirmation code from Google Authenticator
+          example: "123456"
+
+    MFADisableRequest:
+      type: object
+      required:
+        - code
+        - password
+      properties:
+        code:
+          type: string
+          description: Current 6-digit TOTP code
+          example: "123456"
+        password:
+          type: string
+          description: User's account password
+          example: "Password123!"
+
+    MFAVerifyRequest:
+      type: object
+      required:
+        - mfa_token
+      properties:
+        mfa_token:
+          type: string
+          description: Temporary 2FA challenge token received from login
+          example: "01935693-bb6c-7d4a-aa76-e0278ceec002"
+        code:
+          type: string
+          description: 6-digit TOTP verification code
+          example: "123456"
+        recovery_code:
+          type: string
+          description: Emergency 8-character recovery code
+          example: "ABCD-1234"
+
+    MFAMessageResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: Status message
+          example: "Multi-Factor Authentication has been successfully enabled"
