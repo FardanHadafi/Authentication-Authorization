@@ -8,15 +8,55 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type User struct {
-	ID           uuid.UUID `json:"id"`
-	FullName     string    `json:"full_name"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"password_hash"`
-	Role         string    `json:"role"`
-	Status       string    `json:"status"`
+type AuditLog struct {
+	ID           uuid.UUID   `json:"id"`
+	ActorID      pgtype.UUID `json:"actor_id"`
+	ActorEmail   pgtype.Text `json:"actor_email"`
+	ActorRole    pgtype.Text `json:"actor_role"`
+	Action       string      `json:"action"`
+	ResourceType string      `json:"resource_type"`
+	ResourceID   pgtype.Text `json:"resource_id"`
+	Status       string      `json:"status"`
+	IpAddress    string      `json:"ip_address"`
+	UserAgent    string      `json:"user_agent"`
+	Metadata     []byte      `json:"metadata"`
+	CreatedAt    time.Time   `json:"created_at"`
+}
+
+type Permission struct {
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	Description pgtype.Text `json:"description"`
+	CreatedAt   time.Time   `json:"created_at"`
+}
+
+type Role struct {
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	Description pgtype.Text `json:"description"`
+	CreatedAt   time.Time   `json:"created_at"`
+}
+
+type RolePermission struct {
+	RoleID       string    `json:"role_id"`
+	PermissionID string    `json:"permission_id"`
 	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type User struct {
+	ID               uuid.UUID   `json:"id"`
+	FullName         string      `json:"full_name"`
+	Email            string      `json:"email"`
+	PasswordHash     string      `json:"password_hash"`
+	Role             string      `json:"role"`
+	Status           string      `json:"status"`
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
+	TokenVersion     int32       `json:"token_version"`
+	MfaEnabled       bool        `json:"mfa_enabled"`
+	MfaSecret        pgtype.Text `json:"mfa_secret"`
+	MfaRecoveryCodes []string    `json:"mfa_recovery_codes"`
 }

@@ -44,19 +44,80 @@ type ResendVerificationEmailResponse struct {
 }
 
 type UserResponse struct {
-	ID        string    `json:"id"`
-	FullName  string    `json:"full_name"`
-	Email     string    `json:"email"`
-	Role      string    `json:"role"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	FullName     string    `json:"full_name"`
+	Email        string    `json:"email"`
+	Role         string    `json:"role"`
+	Status       string    `json:"status"`
+	TokenVersion int       `json:"token_version"`
+	MFAEnabled   bool      `json:"mfa_enabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type AuthResponse struct {
 	TokenType    string       `json:"token_type,omitempty"` // "Bearer"
 	AccessToken  string       `json:"access_token,omitempty"`
 	RefreshToken string       `json:"refresh_token,omitempty"`
-	ExpiresAt    time.Time    `json:"expires_at"`
-	User         UserResponse `json:"user"`
+	ExpiresAt    time.Time    `json:"expires_at,omitempty"`
+	MFARequired  bool         `json:"mfa_required,omitempty"`
+	MFAToken     string       `json:"mfa_token,omitempty"`
+	User         UserResponse `json:"user,omitempty"`
+}
+
+type AuditLogResponse struct {
+	ID           string         `json:"id"`
+	ActorID      *string        `json:"actor_id,omitempty"`
+	ActorEmail   *string        `json:"actor_email,omitempty"`
+	ActorRole    *string        `json:"actor_role,omitempty"`
+	Action       string         `json:"action"`
+	ResourceType string         `json:"resource_type"`
+	ResourceID   *string        `json:"resource_id,omitempty"`
+	Status       string         `json:"status"`
+	IPAddress    string         `json:"ip_address"`
+	UserAgent    string         `json:"user_agent"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
+}
+
+type PaginatedAuditLogsResponse struct {
+	Data       []AuditLogResponse `json:"data"`
+	TotalCount int64              `json:"total_count"`
+	Page       int32              `json:"page"`
+	Limit      int32              `json:"limit"`
+}
+
+type CSRFTokenResponse struct {
+	CSRFToken string `json:"csrf_token"`
+}
+
+type UserPermissionsResponse struct {
+	Role        string   `json:"role"`
+	Permissions []string `json:"permissions"`
+}
+
+type MFASetupResponse struct {
+	Secret        string   `json:"secret"`
+	QRCodeURL     string   `json:"qr_code_url"`
+	QRCodeDataURL string   `json:"qr_code_data_url"`
+	RecoveryCodes []string `json:"recovery_codes"`
+}
+
+type MFAEnableRequest struct {
+	Code string `json:"code" validate:"required,len=6"`
+}
+
+type MFADisableRequest struct {
+	Code     string `json:"code" validate:"required"`
+	Password string `json:"password" validate:"required"`
+}
+
+type MFAVerifyRequest struct {
+	MFAToken     string `json:"mfa_token" validate:"required"`
+	Code         string `json:"code,omitempty"`
+	RecoveryCode string `json:"recovery_code,omitempty"`
+}
+
+type MFAMessageResponse struct {
+	Message string `json:"message"`
 }

@@ -13,8 +13,9 @@ import (
 	"time"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/go-redis/redis_rate/v10"
 	"github.com/hibiken/asynq"
-	"github.com/joho/godotenv"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -24,17 +25,13 @@ func main() {
 
 	logger := shared.InitLogger()
 
-	if err := godotenv.Load(); err != nil {
-		logger.Warn("No .env file found or cannot load it", "error", err)
-	}
-
-	connectionString := os.Getenv("DB_URL")
-	if connectionString == "" {
-		logger.Error("DB_URL environment variable is required")
+	cfg, err := shared.LoadConfig()
+	if err != nil {
+		logger.Error("Failed to load environment configuration", "error", err)
 		os.Exit(1)
 	}
 
-	database, err := shared.InitDatabase(rootCtx, connectionString)
+	database, err := shared.InitDatabase(rootCtx, cfg.DBURL)
 	if err != nil {
 		logger.Error("Cannot init database", "error", err)
 		os.Exit(1)
@@ -43,33 +40,24 @@ func main() {
 	logger.Info("Database connected successfully !")
 
 	queries := db.New(database)
+	transactor := shared.NewTransactor(database)
 
-	// Mailpit
-	smtpHost := os.Getenv("SMTP_HOST")
-	smtpPort := os.Getenv("SMTP_PORT")
-	smtpFrom := os.Getenv("SMTP_FROM")
-	if smtpFrom == "" {
-		smtpFrom = os.Getenv("FROM")
-	}
-	if smtpFrom == "" {
-		smtpFrom = "crackerstudio@digital"
-	}
-	mailer := shared.NewMailer(smtpHost, smtpPort, smtpFrom)
+	// Mailer with go-mail & circuit breaker
+	mailer := shared.NewMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPFrom)
 
 	// Asynq Client
-	redisAddress := os.Getenv("REDIS_ADDR")
-	asynqClient := asynq.NewClient(asynq.RedisClientOpt{Addr: redisAddress})
+	asynqClient := asynq.NewClient(asynq.RedisClientOpt{Addr: cfg.RedisAddr})
 	defer asynqClient.Close()
 
 	// Redis Client (untuk token verifikasi & cache)
 	redisClient := redis.NewClient(&redis.Options{
-		Addr: redisAddress,
+		Addr: cfg.RedisAddr,
 	})
 	defer redisClient.Close()
 
 	// Asynq Server
 	asynqServer := asynq.NewServer(
-		asynq.RedisClientOpt{Addr: redisAddress},
+		asynq.RedisClientOpt{Addr: cfg.RedisAddr},
 		asynq.Config{Concurrency: 10},
 	)
 
@@ -87,35 +75,62 @@ func main() {
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
 
-	JWT_SECRET := os.Getenv("JWT_SECRET")
-	if JWT_SECRET == "" {
-		logger.Error("JWT_SECRET is not set in .env file")
-		os.Exit(1)
-	}
-
-	tokenManager := shared.NewTokenManager([]byte(JWT_SECRET), 15*time.Minute, "crackerstudio@digital")
+	tokenManager := shared.NewTokenManager([]byte(cfg.JWTSecret), 15*time.Minute, "crackerstudio@digital")
 
 	mux := http.NewServeMux()
 
-	// Auth Service
-	authService := auth.NewAuthService(queries, asynqClient, mailer, redisClient, tokenManager)
+	// Audit Logger (Asynchronous non-blocking security audit logger)
+	auditLogger := shared.NewAuditLogger(queries, logger, 1000)
+
+	// Permission Checker (PBAC with Redis caching)
+	permissionChecker := shared.NewPermissionChecker(queries, redisClient)
+
+	// Auth Service (equipped with database Transactor for atomic mutations)
+	authService := auth.NewAuthService(queries, transactor, asynqClient, mailer, redisClient, tokenManager, auditLogger, permissionChecker)
 
 	// Auth Handler
 	authHandler := auth.NewAuthHandler(authService, logger, validate)
 
-	// Auth Routes
-	auth.RegisterRoutes(mux, authHandler, tokenManager)
+	// Redis Rate Limiter
+	limiter := redis_rate.NewLimiter(redisClient)
 
-	port := os.Getenv("API_PORT")
+	// Token Revocation Checker
+	revocationChecker := shared.NewRevocationChecker(redisClient)
+
+	// Auth Routes
+	auth.RegisterRoutes(mux, authHandler, tokenManager, limiter, revocationChecker, permissionChecker)
+
+	// Prometheus Metrics Endpoint
+	mux.Handle("GET /metrics", promhttp.Handler())
+
+	// OpenTelemetry Tracing ke Grafana Tempo
+	_, shutdownTracer, err := shared.InitTracer(rootCtx, "auth-api", cfg.TempoEndpoint)
+	if err != nil {
+		logger.Warn("Failed to initialize OpenTelemetry tracer, continuing without tracing", "error", err)
+	} else {
+		defer func() {
+			if err := shutdownTracer(context.Background()); err != nil {
+				logger.Error("Failed to shutdown tracer gracefully", "error", err)
+			}
+		}()
+		logger.Info("OpenTelemetry tracer initialized successfully", "endpoint", cfg.TempoEndpoint)
+	}
+
+	port := cfg.APIPort
 	if port == "" {
 		port = "8080"
 	}
 
+	csrfConfig := shared.DefaultCSRFConfig()
+
 	router := shared.Chain(
 		mux,
 		shared.RequestIDMiddleware,
+		shared.TracingMiddleware("auth-api"),
+		shared.MetricsMiddleware,
 		shared.RecoveryMiddleware(logger),
 		shared.LoggingMiddleware(logger),
+		shared.CSRFMiddleware(csrfConfig),
 	)
 
 	server := &http.Server{
@@ -153,6 +168,13 @@ func main() {
 	// 2. Matikan Asynq Server, tunggu task email yang sedang dikirim selesai
 	asynqServer.Shutdown()
 	logger.Info("Asynq worker stopped gracefully")
+
+	// 3. Matikan Audit Logger, flush sisa antrean log audit ke PostgreSQL
+	if err := auditLogger.Shutdown(shutdownCtx); err != nil {
+		logger.Error("Audit logger forced to shutdown", "error", err)
+	} else {
+		logger.Info("Audit logger flushed and stopped gracefully")
+	}
 
 	logger.Info("Application exited cleanly")
 }

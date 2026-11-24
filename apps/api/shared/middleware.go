@@ -2,6 +2,7 @@ package shared
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -15,6 +16,19 @@ type contextKey string
 
 const RequestIDKey contextKey = "request_id"
 const UserClaimsKey contextKey = "user_claims"
+const ClientInfoKey contextKey = "client_info"
+
+type ClientInfo struct {
+	IP        string
+	UserAgent string
+}
+
+func GetClientInfo(ctx context.Context) ClientInfo {
+	if info, ok := ctx.Value(ClientInfoKey).(ClientInfo); ok {
+		return info
+	}
+	return ClientInfo{IP: "127.0.0.1", UserAgent: "unknown"}
+}
 
 // Helper untuk mengambil request ID dari context manapun
 func GetRequestID(ctx context.Context) string {
@@ -31,7 +45,7 @@ func GetUserClaims(ctx context.Context) *JWTClaims {
 	return nil
 }
 
-// Menginjeksi / meneruskan X-Request-ID
+// Menginjeksi / meneruskan X-Request-ID serta ClientInfo ke context
 func RequestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Ambil dari header request jika ada
@@ -45,8 +59,14 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 		// Set ke header response agar client menerima ID yang sama
 		w.Header().Set("X-Request-ID", requestID)
 
+		clientInfo := ClientInfo{
+			IP:        GetClientIP(r),
+			UserAgent: r.UserAgent(),
+		}
+
 		// Masukan ke context
 		ctx := context.WithValue(r.Context(), RequestIDKey, requestID)
+		ctx = context.WithValue(ctx, ClientInfoKey, clientInfo)
 
 		// Teruskan request dengan context baru
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -95,6 +115,10 @@ type responseWriter struct {
 }
 
 func newResponseWriter(w http.ResponseWriter) *responseWriter {
+	if rw, ok := w.(*responseWriter); ok {
+		return rw
+	}
+
 	// Default status code di Go adalah 200 OK jika handler tidak memanggil WriteHeader secara eksplisit
 	return &responseWriter{
 		ResponseWriter: w,
@@ -129,6 +153,12 @@ func (rw *responseWriter) Unwrap() http.ResponseWriter {
 func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Abaikan logging untuk endpoint /metrics agar tidak membanjiri log
+			if r.URL.Path == "/metrics" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			start := time.Now()
 
 			// Ambil request ID dari context
@@ -139,7 +169,8 @@ func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 			if clientIP == "" {
 				clientIP = r.RemoteAddr
 			} else {
-				clientIP = strings.Split(clientIP, ",")[0]
+				first, _, _ := strings.Cut(clientIP, ",")
+				clientIP = strings.TrimSpace(first)
 			}
 
 			// Bungkus response writer untuk menyadap status code & ukuran response
@@ -150,6 +181,10 @@ func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 
 			// Hitung durasi request
 			duration := time.Since(start)
+
+			// Ambil trace_id dan span_id dari OpenTelemetry jika tersedia
+			traceID, _ := r.Context().Value(TraceIDKey).(string)
+			spanID, _ := r.Context().Value(SpanIDKey).(string)
 
 			// Tentukan log level secara dinamis sesuai HTTP status
 			msg := "http request completed"
@@ -162,6 +197,13 @@ func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 				"bytes", wrapped.bytesWritten,
 				"client_ip", clientIP,
 				"user_agent", r.UserAgent(),
+			}
+
+			if traceID != "" {
+				attrs = append(attrs, "trace_id", traceID)
+			}
+			if spanID != "" {
+				attrs = append(attrs, "span_id", spanID)
 			}
 
 			switch {
@@ -186,8 +228,13 @@ func Chain(h http.Handler, middlewares ...Middleware) http.Handler {
 	return h
 }
 
-// RequireAuth memvalidasi JWT Access Token dari header Authorization: Bearer <token>
-func RequireAuth(tokenManager TokenManager) Middleware {
+// RequireAuth memvalidasi JWT Access Token dari header Authorization: Bearer <token> serta memeriksa revocation status
+func RequireAuth(tokenManager TokenManager, revocationCheckers ...TokenRevocationChecker) Middleware {
+	var revocationChecker TokenRevocationChecker
+	if len(revocationCheckers) > 0 {
+		revocationChecker = revocationCheckers[0]
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
@@ -196,17 +243,26 @@ func RequireAuth(tokenManager TokenManager) Middleware {
 				return
 			}
 
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			scheme, tokenString, found := strings.Cut(authHeader, " ")
+			if !found || !strings.EqualFold(scheme, "Bearer") {
 				WriteError(w, http.StatusUnauthorized, "invalid authorization format, expected 'Bearer <token>'")
 				return
 			}
 
-			tokenString := strings.TrimSpace(parts[1])
+			tokenString = strings.TrimSpace(tokenString)
 			claims, err := tokenManager.ValidateAccessToken(tokenString)
 			if err != nil {
 				WriteError(w, http.StatusUnauthorized, "invalid or expired access token")
 				return
+			}
+
+			// Cek apakah token telah dicabut (Revocation Check via Redis / Token Version)
+			if revocationChecker != nil {
+				revoked, err := revocationChecker.IsTokenRevoked(r.Context(), claims.UserID, claims.TokenVersion, claims.ID)
+				if err == nil && revoked {
+					WriteError(w, http.StatusUnauthorized, "access token has been revoked")
+					return
+				}
 			}
 
 			ctx := context.WithValue(r.Context(), UserClaimsKey, claims)
@@ -227,6 +283,27 @@ func RequireRole(allowedRoles ...string) Middleware {
 
 			if !slices.Contains(allowedRoles, claims.Role) {
 				WriteError(w, http.StatusForbidden, "forbidden: insufficient permissions")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequirePermission membatasi akses endpoint berdasarkan permission granular (PBAC)
+func RequirePermission(checker PermissionChecker, permission string) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims := GetUserClaims(r.Context())
+			if claims == nil {
+				WriteError(w, http.StatusUnauthorized, "unauthorized: no user identity found")
+				return
+			}
+
+			hasPerm, err := checker.HasPermission(r.Context(), claims.Role, permission)
+			if err != nil || !hasPerm {
+				WriteError(w, http.StatusForbidden, fmt.Sprintf("forbidden: missing required permission '%s'", permission))
 				return
 			}
 

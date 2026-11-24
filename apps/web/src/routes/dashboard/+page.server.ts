@@ -1,7 +1,20 @@
-import { redirect, type Actions } from "@sveltejs/kit";
+import { fail, redirect, type Actions } from "@sveltejs/kit";
 import type { PageServerLoad } from "./$types";
+import QRCode from "qrcode";
 
 const API_URL = import.meta.env.VITE_API_URL!;
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  role: string;
+  full_name?: string;
+  status?: string;
+  token_version?: number;
+  mfa_enabled?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
 
 export const load = (async ({ locals, fetch, cookies }) => {
   // Guard autentikasi dasar
@@ -14,40 +27,50 @@ export const load = (async ({ locals, fetch, cookies }) => {
     redirect(303, "/login");
   }
 
-  // Ambil data user profile dari backend
+  // 1. Ambil data user profile dari backend
+  let profile: UserProfile = locals.user;
+  let permissions: string[] = [];
+
   try {
-    const response = await fetch(`${API_URL}/auth/me`, {
+    const profileRes = await fetch(`${API_URL}/auth/me`, {
       method: "GET",
-      headers: {
-        "Authorization": `Bearer ${accessToken}`
-      }
+      headers: { "Authorization": `Bearer ${accessToken}` }
     });
 
-    // Jika token invalid / expired
-    if (response.status === 401) {
+    if (profileRes.status === 401) {
       cookies.delete("access_token", { path: "/" });
       cookies.delete("refresh_token", { path: "/" });
       redirect(303, "/login");
     }
 
-    if (!response.ok) {
-      // Fallback aman jika terjadi error selain 401
-      return { user: locals.user };
+    if (profileRes.ok) {
+      profile = await profileRes.json();
     }
 
-    const profile = await response.json();
-    return { user: profile };
+    // 2. Ambil izin granular PBAC user
+    const permsRes = await fetch(`${API_URL}/auth/me/permissions`, {
+      method: "GET",
+      headers: { "Authorization": `Bearer ${accessToken}` }
+    });
+
+    if (permsRes.ok) {
+      const permsData = await permsRes.json();
+      permissions = permsData.permissions || [];
+    }
   } catch {
-    // Fallback aman jika backend tidak merespons
-    return { user: locals.user };
+    // Gunakan fallback locals jika backend timeout
   }
+
+  return {
+    user: profile,
+    permissions
+  };
 }) satisfies PageServerLoad;
 
 export const actions: Actions = {
   logout: async ({ fetch, cookies }) => {
     const refreshToken = cookies.get("refresh_token");
 
-    // Panggil backend Go untuk mencabut (revoke) refresh token dari Redis
     try {
       if (refreshToken) {
         await fetch(`${API_URL}/auth/logout`, {
@@ -57,13 +80,131 @@ export const actions: Actions = {
         });
       }
     } catch {
-      // Abaikan error jaringan backend saat logout agar cookie tetap bersih
+      // Abaikan error jaringan saat logout
     }
 
-    // Hapus cookies dari SvelteKit BFF
     cookies.delete("access_token", { path: "/" });
     cookies.delete("refresh_token", { path: "/" });
 
     redirect(303, "/login");
+  },
+
+  setupMfa: async ({ fetch, cookies }) => {
+    const accessToken = cookies.get("access_token");
+    if (!accessToken) {
+      redirect(303, "/login");
+    }
+
+    try {
+      const res = await fetch(`${API_URL}/auth/mfa/setup`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
+        }
+      });
+
+      if (!res.ok) {
+        const { error } = await res.json();
+        return fail(res.status, { mfaActionError: error || "Gagal memulai setup MFA" });
+      }
+
+      const setupData = await res.json();
+      let qrCodeDataUrl = setupData.qr_code_data_url;
+      if (!qrCodeDataUrl && setupData.qr_code_url) {
+        try {
+          qrCodeDataUrl = await QRCode.toDataURL(setupData.qr_code_url, {
+            width: 250,
+            margin: 2
+          });
+        } catch {
+          // ignore error
+        }
+      }
+
+      return {
+        setupData: {
+          secret: setupData.secret,
+          qrCodeUrl: setupData.qr_code_url,
+          qrCodeDataUrl: qrCodeDataUrl || '',
+          recoveryCodes: setupData.recovery_codes || []
+        }
+      };
+    } catch {
+      return fail(500, { mfaActionError: "Gagal terhubung dengan server backend" });
+    }
+  },
+
+  enableMfa: async ({ request, fetch, cookies }) => {
+    const accessToken = cookies.get("access_token");
+    if (!accessToken) {
+      redirect(303, "/login");
+    }
+
+    const formData = await request.formData();
+    const code = (formData.get("code") as string)?.trim();
+
+    if (!code) {
+      return fail(400, { mfaActionError: "Kode verifikasi 6-digit wajib diisi" });
+    }
+
+    try {
+      const res = await fetch(`${API_URL}/auth/mfa/enable`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ code })
+      });
+
+      if (!res.ok) {
+        const { error } = await res.json();
+        return fail(res.status, { mfaActionError: error || "Kode verifikasi salah atau kedaluwarsa" });
+      }
+
+      return {
+        mfaSuccessMessage: "Multi-Factor Authentication (2FA) berhasil diaktifkan!"
+      };
+    } catch {
+      return fail(500, { mfaActionError: "Gagal terhubung dengan server backend" });
+    }
+  },
+
+  disableMfa: async ({ request, fetch, cookies }) => {
+    const accessToken = cookies.get("access_token");
+    if (!accessToken) {
+      redirect(303, "/login");
+    }
+
+    const formData = await request.formData();
+    const code = (formData.get("code") as string)?.trim();
+    const password = (formData.get("password") as string)?.trim();
+
+    if (!code || !password) {
+      return fail(400, { mfaActionError: "Password dan kode 6-digit TOTP wajib diisi" });
+    }
+
+    try {
+      const res = await fetch(`${API_URL}/auth/mfa/disable`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ code, password })
+      });
+
+      if (!res.ok) {
+        const { error } = await res.json();
+        return fail(res.status, { mfaActionError: error || "Gagal menonaktifkan 2FA. Periksa password dan kode Anda." });
+      }
+
+      return {
+        mfaSuccessMessage: "2FA berhasil dinonaktifkan."
+      };
+    } catch {
+      return fail(500, { mfaActionError: "Gagal terhubung dengan server backend" });
+    }
   }
 };

@@ -43,6 +43,82 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  prometheus:
+    image: docker.io/prom/prometheus:latest
+    container_name: auth-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.containers.internal:host-gateway"
+    volumes:
+      - ./infra/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
+      - prometheus_data:/prometheus:Z
+
+  tempo:
+    image: docker.io/grafana/tempo:latest
+    container_name: auth-tempo
+    user: "0:0"
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    ports:
+      - "3200:3200" # Tempo HTTP
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    volumes:
+      - ./infra/observability/tempo/tempo.yml:/etc/tempo.yaml:ro,Z
+      - tempo_data:/tmp/tempo:Z
+
+  loki:
+    image: docker.io/grafana/loki:latest
+    container_name: auth-loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./infra/observability/loki/loki.yml:/etc/loki/local-config.yaml:ro,Z
+      - loki_data:/tmp/loki:Z
+
+  grafana:
+    image: docker.io/grafana/grafana:latest
+    container_name: auth-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro,Z
+      - grafana_data:/var/lib/grafana:Z
+    depends_on:
+      - prometheus
+      - tempo
+      - loki
+
+  promtail:
+    image: docker.io/grafana/promtail:latest
+    container_name: auth-promtail
+    restart: unless-stopped
+    command: ["-config.file=/etc/promtail/promtail.yml"]
+    volumes:
+      - ./infra/observability/promtail/promtail.yml:/etc/promtail/promtail.yml:ro,Z
+      - ./apps/api/logs:/var/log/auth-api:ro,Z
+      - promtail_positions:/tmp:Z
+    depends_on:
+      - loki
+
 volumes:
   postgres_data:
   redis_data:
+  prometheus_data:
+  tempo_data:
+  loki_data:
+  grafana_data:
+  promtail_positions:
