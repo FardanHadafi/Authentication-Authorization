@@ -4,6 +4,18 @@ import QRCode from "qrcode";
 
 const API_URL = import.meta.env.VITE_API_URL!;
 
+export interface UserProfile {
+  id: string;
+  email: string;
+  role: string;
+  full_name?: string;
+  status?: string;
+  token_version?: number;
+  mfa_enabled?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export const load = (async ({ locals, fetch, cookies }) => {
   // Guard autentikasi dasar
   if (!locals.user) {
@@ -16,7 +28,7 @@ export const load = (async ({ locals, fetch, cookies }) => {
   }
 
   // 1. Ambil data user profile dari backend
-  let profile = locals.user;
+  let profile: UserProfile = locals.user;
   let permissions: string[] = [];
 
   try {

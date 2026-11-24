@@ -8,6 +8,10 @@ declare global {
 				id: string;
 				email: string;
 				role: string;
+				full_name?: string;
+				status?: string;
+				token_version?: number;
+				mfa_enabled?: boolean;
 			} | null;
 		}
 		// interface PageData {}
