@@ -16,7 +16,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 };
 
 export const actions: Actions = {
-  default: async ({ request, fetch, cookies }) => {
+  login: async ({ request, fetch, cookies }) => {
     const formData = await request.formData();
     const result = v.safeParse(LoginSchema, Object.fromEntries(formData));
     if (!result.success) {

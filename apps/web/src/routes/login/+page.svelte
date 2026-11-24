@@ -168,6 +168,7 @@
 				{/if}
 
 				<form
+					action="?/login"
 					method="POST"
 					use:enhance={() => {
 						isSubmitting = true;
