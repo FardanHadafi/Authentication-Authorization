@@ -6,7 +6,7 @@ info:
     Production-grade Authentication and Authorization REST API service built with:
     - **Go 1.27** (net/http ServeMux routing, encoding/json/v2, gobreaker circuit breaker)
     - **PostgreSQL 18** (Native UUIDv7, SQLC, pgx/v5)
-    - **Redis 8** (Verification tokens, refresh token rotation, task queue, GCRA rate limiting)
+    - **Redis 8 Server** (via `go-redis/v9` & `redis_rate/v10`: verification tokens, refresh token rotation, task queue, GCRA rate limiting)
     - **Asynq & Mailpit** (Asynchronous email queue & SMTP delivery)
   contact:
     name: API Support
