@@ -96,10 +96,7 @@ func RateLimitMiddleware(limiter *redis_rate.Limiter, keyFunc KeyFunc, limit int
 
 			// Jika kuota habis, tolak dengan 429 Too Many Requests
 			if res.Allowed == 0 {
-				retryAfterSecs := int(res.RetryAfter.Seconds())
-				if retryAfterSecs < 1 {
-					retryAfterSecs = 1
-				}
+				retryAfterSecs := max(1, int(res.RetryAfter.Seconds()))
 				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSecs))
 
 				WriteError(w, http.StatusTooManyRequests, fmt.Sprintf("too many requests, please try again in %d seconds", retryAfterSecs))
