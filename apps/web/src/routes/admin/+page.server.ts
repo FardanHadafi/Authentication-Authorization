@@ -9,7 +9,7 @@ export const load = (async ({ locals, fetch, cookies }) => {
     redirect(303, "/login");
   }
 
-  // Guard Authorization / RBAC (Admin Only Role)
+  // Guard Authorization (Admin Only Role)
   if (locals.user.role !== "admin") {
     error(403, "Akses Ditolak: Halaman ini hanya dapat diakses oleh Administrator.");
   }
@@ -19,33 +19,48 @@ export const load = (async ({ locals, fetch, cookies }) => {
     redirect(303, "/login");
   }
 
-  // Panggil endpoint GET /api/admin/users
+  let users = [];
+  let auditLogs = [];
+  let totalAuditLogs = 0;
+
   try {
-    const response = await fetch(`${API_URL}/admin/users`, {
+    // 1. Ambil daftar pengguna
+    const usersRes = await fetch(`${API_URL}/admin/users`, {
       method: "GET",
       headers: { "Authorization": `Bearer ${accessToken}` }
     });
 
-    // Jika token invalid / expired
-    if (response.status === 401) {
+    if (usersRes.status === 401) {
       cookies.delete("access_token", { path: "/" });
       cookies.delete("refresh_token", { path: "/" });
       redirect(303, "/login");
     }
 
-    // Jika role bukan "admin"
-    if (response.status === 403) {
+    if (usersRes.status === 403) {
       error(403, "Akses Ditolak: Izin tidak mencukupi untuk mengakses data ini.");
     }
 
-    if (!response.ok) {
-      error(response.status, "Gagal memuat daftar pengguna dari server backend.");
+    if (usersRes.ok) {
+      users = await usersRes.json();
     }
 
-    const users = await response.json();
+    // 2. Ambil catatan audit log kepatuhan (SOC 2 Audit Trail)
+    const logsRes = await fetch(`${API_URL}/admin/audit-logs?limit=50`, {
+      method: "GET",
+      headers: { "Authorization": `Bearer ${accessToken}` }
+    });
+
+    if (logsRes.ok) {
+      const logsData = await logsRes.json();
+      auditLogs = logsData.data || [];
+      totalAuditLogs = logsData.total_count || 0;
+    }
+
     return {
       user: locals.user,
-      users
+      users,
+      auditLogs,
+      totalAuditLogs
     };
   } catch (err) {
     if (isHttpError(err)) {

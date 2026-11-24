@@ -95,8 +95,19 @@ export const ResetPasswordSchema = v.pipe(
   )
 );
 
+export const VerifyMfaSchema = v.object({
+  mfa_token: v.pipe(
+    v.string('Token MFA wajib disertakan'),
+    v.trim(),
+    v.nonEmpty('Token MFA tidak boleh kosong')
+  ),
+  code: v.optional(v.string()),
+  recovery_code: v.optional(v.string())
+});
+
 export type RegisterInput = v.InferInput<typeof RegisterSchema>;
 export type LoginInput = v.InferInput<typeof LoginSchema>;
 export type ForgotPasswordInput = v.InferInput<typeof ForgotPasswordSchema>;
 export type ResendVerificationInput = v.InferInput<typeof ResendVerificationSchema>;
 export type ResetPasswordInput = v.InferInput<typeof ResetPasswordSchema>;
+export type VerifyMfaInput = v.InferInput<typeof VerifyMfaSchema>;
