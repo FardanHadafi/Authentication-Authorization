@@ -60,43 +60,44 @@ The application is structured following Clean Architecture principles and idioma
 
 ```mermaid
 flowchart TD
-    Client["Client / Frontend\n(SvelteKit / SPA / Mobile)"]
+    Client["Client / Frontend<br/>(SvelteKit / SPA / Mobile)"]
 
     subgraph MiddlewareChain ["HTTP Middleware Pipeline (Zero-Allocation Chain)"]
-        M1["RequestID Middleware\n(UUID injection & propagation)"]
-        M2["OpenTelemetry Tracing\n(W3C TraceContext & Span injection)"]
-        M3["Prometheus Metrics\n(Latency, requests_total, status_codes)"]
-        M4["Panic Recovery\n(Structured error logging with stacktrace)"]
-        M5["Structured Logger\n(slog JSON with duration & client IP)"]
-        M6["CSRF Defense-in-Depth\n(Sec-Fetch-Site + Origin + Double Submit)"]
-        M7["GCRA Rate Limiter\n(Redis Token Bucket / Fail-Open)"]
-        M8["RequireAuth & Immediate Revocation\n(JWT decode + Redis token_version check)"]
-        M9["RequirePermission PBAC\n(O(1) Redis Set cache lookup)"]
+        direction TB
+        M1["RequestID Middleware<br/>(UUID injection & propagation)"]
+        M2["OpenTelemetry Tracing<br/>(W3C TraceContext & Span injection)"]
+        M3["Prometheus Metrics<br/>(Latency, requests_total, status_codes)"]
+        M4["Panic Recovery<br/>(Structured error logging with stacktrace)"]
+        M5["Structured Logger<br/>(slog JSON with duration & client IP)"]
+        M6["CSRF Defense-in-Depth<br/>(Sec-Fetch-Site + Origin + Double Submit)"]
+        M7["GCRA Rate Limiter<br/>(Redis Token Bucket / Fail-Open)"]
+        M8["RequireAuth & Immediate Revocation<br/>(JWT decode + Redis token_version check)"]
+        M9["RequirePermission PBAC<br/>(O(1) Redis Set cache lookup)"]
         M1 --> M2 --> M3 --> M4 --> M5 --> M6 --> M7 --> M8 --> M9
     end
 
     subgraph ServiceLayer ["Business & Domain Services"]
-        AuthHandler["Auth HTTP Handler\n(Input Validation & DTO Mapping)"]
-        AuthService["Auth Service Layer\n(Domain Rules & Step-Up Auth)"]
-        Transactor["Database Transactor\n(Atomic RunInTx Engine)"]
-        AuditWorker["Async Audit Logger\n(Buffer Queue & Batch Flushing)"]
+        AuthHandler["Auth HTTP Handler<br/>(Input Validation & DTO Mapping)"]
+        AuthService["Auth Service Layer<br/>(Domain Rules & Step-Up Auth)"]
+        Transactor["Database Transactor<br/>(Atomic RunInTx Engine)"]
+        AuditWorker["Async Audit Logger<br/>(Buffer Queue & Batch Flushing)"]
     end
 
     subgraph StorageLayer ["High-Performance Storage Layer"]
-        Postgres[("PostgreSQL 18\n(Users, Roles, Permissions,\nAudit Logs via sqlc)")]
-        Redis[("Redis 8 Cache & KV\n(Token Versions, PBAC Sets,\nBlacklist, Session Index)")]
-        AsynqQueue["Asynq Task Queue\n(Transactional Email Worker)"]
+        Postgres[("PostgreSQL 18<br/>Users, Roles, Permissions, Audit Logs")]
+        Redis[("Redis 8 Cache & KV<br/>Token Versions, PBAC Sets, Blacklist")]
+        AsynqQueue["Asynq Task Queue<br/>(Transactional Email Worker)"]
     end
 
     subgraph TelemetryStack ["Triple-Pillar Observability Stack"]
-        Prometheus["Prometheus TSDB\n(Scrapes :8080/metrics)"]
-        Tempo["Grafana Tempo\n(Distributed Traces via OTLP gRPC :4317)"]
-        Loki["Grafana Loki\n(Log Ingestion via Promtail)"]
-        Grafana["Grafana Dashboards\n(Unified Observability UI :3000)"]
+        Prometheus["Prometheus TSDB<br/>(Scrapes :8080/metrics)"]
+        Tempo["Grafana Tempo<br/>(Distributed Traces OTLP gRPC :4317)"]
+        Loki["Grafana Loki<br/>(Log Ingestion via Promtail)"]
+        Grafana["Grafana Dashboards<br/>(Unified Observability UI :3000)"]
     end
 
-    Client -->|HTTP Request| MiddlewareChain
-    MiddlewareChain --> AuthHandler
+    Client -->|HTTP Request| M1
+    M9 --> AuthHandler
     AuthHandler --> AuthService
     AuthService --> Transactor
     Transactor --> Postgres
